@@ -1,0 +1,40 @@
+# Unrelated control-plane infra (its own repo) — not part of this project
+The-Ideal-Harness/
+
+# Node
+node_modules/
+*.tsbuildinfo
+
+# Local agent / editor state
+.claude/
+.mcp.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Auditor runtime artifacts
+audit-output*/
+.auditor-cache/
+
+# Env / secrets
+.env
+*.local
+
+# Installed agent skills (reproducible via npx skills add)
+.agents/
+
+# AI-collaboration docs (private; not for the public repo)
+CLAUDE.md
+docs/agents/
+
+# Internal planning / how-it's-made (private; not for the public repo)
+ROADMAP.md
+.scratch/

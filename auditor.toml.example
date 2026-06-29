@@ -1,0 +1,25 @@
+# Example auditor.toml — copy to auditor.toml and edit.
+# Precedence: CLI flags > auditor.toml > built-in defaults.
+
+provider = "auto"            # auto | api | subscription
+out = "audit-output"
+cache = true
+patches = true
+severity_threshold = "info"  # critical | high | medium | low | info
+
+# Command run inside a sandbox copy to verify generated patches.
+# When set and it passes, patches are labelled "verified" instead of
+# "proposed-unverified". Example: "pytest -q" or "npm test".
+# verify_command = "pytest -q"
+
+# Guardrails: the run aborts (cleanly, resumably via the cache) when a cap is
+# hit. Defaults are max_calls = 60 and max_cost_usd = 10. CLI: --max-calls / --max-cost.
+[budget]
+max_calls = 60
+max_cost_usd = 10.0
+# max_total_tokens = 2000000
+
+[audit]
+max_components = 8           # cap deep-dives (scale control)
+concurrency = 3              # parallel deep-dives
+cross_cut = true             # holistic duplication/security/testing pass
