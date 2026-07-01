@@ -39,11 +39,23 @@ function countBySeverity(findings: readonly Finding[]): Record<Severity, number>
   return counts;
 }
 
-/** A 0–100 headline health score: penalise by severity, saturating. */
+/**
+ * A 0–100 headline health score. Each finding contributes a severity-weighted,
+ * confidence-scaled penalty; the total is mapped through a saturating hyperbola
+ * (`100·H/(penalty+H)`) rather than subtracted linearly. The old `100 − penalty`
+ * form clamped flat at 0 after ~8 high findings, so a flagship-quality repo and a
+ * genuinely broken one both read "0/100" — destroying the score's signal. The
+ * curve keeps dynamic range: 0 penalty → 100, `penalty = H` → 50, and it only
+ * approaches (never reaches) the floor, so even a heavily-flagged repo gets a
+ * meaningful number. `H` is the penalty that maps to 50/100 (tunable).
+ */
+const HEALTH_HALF_PENALTY = 150;
+
 export function healthScore(findings: readonly Finding[]): number {
   const weight: Record<Severity, number> = { critical: 25, high: 12, medium: 5, low: 2, info: 0 };
   const penalty = findings.reduce((s, f) => s + weight[f.severity] * f.confidence.score, 0);
-  return Math.max(0, Math.round(100 - penalty));
+  const score = (100 * HEALTH_HALF_PENALTY) / (penalty + HEALTH_HALF_PENALTY);
+  return Math.max(0, Math.min(100, Math.round(score)));
 }
 
 /** The machine-readable source of truth. */
@@ -101,6 +113,7 @@ function renderFinding(f: Finding): string {
     ``,
     `**Remediation.** ${f.remediation}`,
   ];
+  if (f.caveat) lines.push(``, `> ⚠️ **Caveat (confidence capped).** ${f.caveat}`);
   if (f.patchRef) lines.push(``, `**Patch.** \`patches/${f.patchRef}\``);
   return lines.join("\n");
 }

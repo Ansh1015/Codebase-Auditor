@@ -8,6 +8,7 @@
 import { z } from "zod";
 import type { ComponentId } from "../domain/brand.js";
 import type { Finding } from "../domain/finding.js";
+import type { FileRole } from "../domain/taxonomy.js";
 import {
   extractJson,
   groundFindings,
@@ -24,6 +25,7 @@ import {
   contentLookup,
   renderComponentContext,
   renderFileWithLineNumbers,
+  renderProjectFactSheet,
   renderRepoMapSummary,
 } from "./prompts.js";
 
@@ -64,10 +66,15 @@ export interface AuditResult {
 
 export function buildRepoIndex(ingest: IngestResult): RepoIndex {
   const lines = new Map<string, number>();
-  for (const f of ingest.files) lines.set(f.path, f.lineCount);
+  const roles = new Map<string, FileRole>();
+  for (const f of ingest.files) {
+    lines.set(f.path, f.lineCount);
+    roles.set(f.path, f.role);
+  }
   return {
     has: (p) => lines.has(p),
     lineCount: (p) => lines.get(p),
+    role: (p) => roles.get(p),
   };
 }
 
@@ -131,6 +138,7 @@ async function runDeepDive(
   map: RepoMap,
   contentOf: (path: string) => string | undefined,
   opts: AuditOptions,
+  factSheet: string,
 ): Promise<ReturnType<typeof parseFindingsResponse>> {
   const ctx = renderComponentContext(component, map, contentOf, {
     maxChars: opts.maxCharsPerComponent,
@@ -138,7 +146,7 @@ async function runDeepDive(
   });
   const res = await provider.complete({
     system: FINDINGS_SYSTEM,
-    user: `Audit this component for engineering issues. Cite exact file:line from the gutter.\n\n${ctx.body}`,
+    user: `${factSheet}\n\nAudit this component for engineering issues. Cite exact file:line from the gutter.\n\n${ctx.body}`,
     tier: "deep",
     maxOutputTokens: 4096,
   });
@@ -150,6 +158,7 @@ async function runCrossCut(
   map: RepoMap,
   contentOf: (path: string) => string | undefined,
   opts: AuditOptions,
+  factSheet: string,
 ): Promise<ReturnType<typeof parseFindingsResponse>> {
   const summary = renderRepoMapSummary(map);
   const parts: string[] = [];
@@ -164,7 +173,7 @@ async function runCrossCut(
   }
   const res = await provider.complete({
     system: FINDINGS_SYSTEM,
-    user: `Perform a CROSS-CUTTING review of the whole system. Focus on architecture consistency, duplicated business logic ACROSS files, security posture, and testing strategy. Cite exact file:line.\n\n${summary}\n\n=== KEY FILES ===\n${parts.join("\n\n")}`,
+    user: `${factSheet}\n\nPerform a CROSS-CUTTING review of the whole system. Focus on architecture consistency, duplicated business logic ACROSS files, security posture, and testing strategy. Cite exact file:line.\n\n${summary}\n\n=== KEY FILES ===\n${parts.join("\n\n")}`,
     tier: "synthesis",
     maxOutputTokens: 4096,
   });
@@ -191,16 +200,17 @@ export async function runAudit(
   const contentOf = contentLookup(ingest.files);
   const index = buildRepoIndex(ingest);
 
+  const factSheet = renderProjectFactSheet(map);
   const triage = await runTriage(provider, map);
   const components = orderComponents(map, triage.priorityComponents, options.maxComponents);
 
   const deepResults = await runPool(components, options.concurrency, (c) =>
-    runDeepDive(provider, c, map, contentOf, options),
+    runDeepDive(provider, c, map, contentOf, options, factSheet),
   );
   const raws = deepResults.flat();
 
   if (options.crossCut) {
-    raws.push(...(await runCrossCut(provider, map, contentOf, options)));
+    raws.push(...(await runCrossCut(provider, map, contentOf, options, factSheet)));
   }
 
   const grounded = groundFindings(raws, index);

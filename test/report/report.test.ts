@@ -82,4 +82,47 @@ describe("report rendering", () => {
     expect(healthScore([])).toBe(100);
     expect(healthScore(report.findings)).toBeLessThan(100);
   });
+
+  describe("healthScore — dynamic range (V-002)", () => {
+    const mk = (severity: Finding["severity"], n: number, score = 0.9): Finding[] =>
+      Array.from({ length: n }, (_, i) => ({
+        ...finding,
+        id: findingId(`SEC-${String(i + 1).padStart(3, "0")}`),
+        severity,
+        confidence: { level: "high", score },
+      }));
+
+    it("returns 100 for a clean repo and stays within [0,100]", () => {
+      expect(healthScore([])).toBe(100);
+      for (const fs of [mk("low", 1), mk("high", 50), mk("critical", 100)]) {
+        const s = healthScore(fs);
+        expect(s).toBeGreaterThanOrEqual(0);
+        expect(s).toBeLessThanOrEqual(100);
+      }
+    });
+
+    it("does NOT saturate to 0 after a handful of high findings (the V-002 bug)", () => {
+      // Old linear formula hit 0 at ~8 highs. The curve must keep dynamic range.
+      expect(healthScore(mk("high", 9))).toBeGreaterThan(20);
+      // Even a heavily-flagged repo keeps a meaningful, non-zero score.
+      expect(healthScore(mk("high", 40))).toBeGreaterThan(0);
+    });
+
+    it("is monotonic: more findings never raise the score", () => {
+      let prev = healthScore([]);
+      for (let n = 1; n <= 20; n++) {
+        const s = healthScore(mk("high", n));
+        expect(s).toBeLessThanOrEqual(prev);
+        prev = s;
+      }
+    });
+
+    it("makes severity bite: one critical scores below one low", () => {
+      expect(healthScore(mk("critical", 1))).toBeLessThan(healthScore(mk("low", 1)));
+    });
+
+    it("scales penalty by confidence: a low-confidence finding hurts less", () => {
+      expect(healthScore(mk("high", 3, 0.3))).toBeGreaterThan(healthScore(mk("high", 3, 1)));
+    });
+  });
 });

@@ -7,6 +7,7 @@ import type { RawFinding } from "../../src/findings/schema.js";
 const index: RepoIndex = {
   has: (p) => p === "src/app/services.py" || p === "src/app/utils.py",
   lineCount: (p) => (p === "src/app/services.py" ? 40 : p === "src/app/utils.py" ? 14 : undefined),
+  role: (p) => (p === "src/app/services.py" || p === "src/app/utils.py" ? "source" : undefined),
 };
 
 const raw = (over: Partial<RawFinding> = {}): RawFinding => ({
@@ -59,6 +60,33 @@ describe("groundFindings — evidence gate", () => {
     expect(out).toHaveLength(1);
     expect(out[0]?.evidence).toHaveLength(1);
     expect(out[0]?.confidence.score).toBeLessThan(0.9);
+  });
+
+  it("caps confidence + attaches a caveat for an unverifiable doc-as-code claim", () => {
+    const docIndex: RepoIndex = {
+      has: (p) => p === "docs/guide.md",
+      lineCount: (p) => (p === "docs/guide.md" ? 100 : undefined),
+      role: (p) => (p === "docs/guide.md" ? "docs" : undefined),
+    };
+    const docFinding = raw({
+      category: "maintainability",
+      confidenceScore: 1,
+      title: "Example uses ellipsis which is invalid JavaScript syntax",
+      reasoning: "The snippet won't compile.",
+      affectedFiles: [{ path: "docs/guide.md", startLine: 5, endLine: 5 }],
+    });
+    const out = groundFindings([docFinding], docIndex);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.caveat).toBeTruthy();
+    expect(out[0]?.confidence.score).toBeLessThanOrEqual(0.4);
+    // Capped below "high" → patch-ineligible by selectPatchable's gate.
+    expect(out[0]?.confidence.level).not.toBe("high");
+  });
+
+  it("leaves a normal source finding un-caveated and at full confidence", () => {
+    const out = groundFindings([raw()], index);
+    expect(out[0]?.caveat).toBeUndefined();
+    expect(out[0]?.confidence.score).toBe(0.9);
   });
 
   it("numbers ids per-category independently", () => {

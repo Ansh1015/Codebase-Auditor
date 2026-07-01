@@ -40,6 +40,13 @@ export interface Finding {
   readonly reasoning: string;
   /** Concrete, actionable recommended fix. */
   readonly remediation: string;
+  /**
+   * Set by a context-grounding guard when the finding rests on a claim the
+   * deterministic core could not verify locally (external URL, doc-as-code,
+   * whole-project structure). When present, confidence has been capped and the
+   * finding is patch-ineligible. Human-readable rationale for the cap.
+   */
+  readonly caveat?: string;
   /** Filename of a generated patch under patches/, if one was produced. */
   readonly patchRef?: string;
 }

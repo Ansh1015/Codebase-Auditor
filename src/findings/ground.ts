@@ -9,13 +9,21 @@
 
 import { type FindingId, componentId, findingId, repoRelPath } from "../domain/brand.js";
 import type { EvidenceRef, Finding } from "../domain/finding.js";
-import { type Category, SEVERITY_RANK, confidenceLevel } from "../domain/taxonomy.js";
+import {
+  type Category,
+  type FileRole,
+  SEVERITY_RANK,
+  confidenceLevel,
+} from "../domain/taxonomy.js";
+import { CAVEAT_CONFIDENCE_CAP, detectGroundingCaveat } from "./guards.js";
 import { type RawFinding, findingsEnvelopeSchema, rawFindingSchema } from "./schema.js";
 
 export interface RepoIndex {
   has(path: string): boolean;
   /** Total lines in the file, or undefined if unknown/absent. */
   lineCount(path: string): number | undefined;
+  /** Role of the file (drives context-grounding guards), or undefined if absent. */
+  role(path: string): FileRole | undefined;
 }
 
 const CATEGORY_PREFIX: Readonly<Record<Category, string>> = {
@@ -112,7 +120,19 @@ export function groundFindings(raws: readonly RawFinding[], index: RepoIndex): F
 
     const total = raw.affectedFiles.length;
     const droppedFraction = total > 0 ? 1 - evidence.length / total : 0;
-    const score = round3(raw.confidenceScore * (1 - MAX_PENALTY * droppedFraction));
+    let score = round3(raw.confidenceScore * (1 - MAX_PENALTY * droppedFraction));
+
+    // Context-grounding guards: cap confidence on claims we can't verify locally
+    // (external resources, doc-as-code, whole-project structure). Capping below
+    // the patch threshold also makes the finding patch-ineligible.
+    const roles = evidence
+      .map((e) => index.role(e.path))
+      .filter((r): r is FileRole => r !== undefined);
+    const caveat = detectGroundingCaveat(
+      { title: raw.title, reasoning: raw.reasoning, remediation: raw.remediation },
+      roles,
+    );
+    if (caveat) score = round3(Math.min(score, CAVEAT_CONFIDENCE_CAP));
 
     const n = (counters.get(raw.category) ?? 0) + 1;
     counters.set(raw.category, n);
@@ -131,6 +151,7 @@ export function groundFindings(raws: readonly RawFinding[], index: RepoIndex): F
       evidence,
       reasoning: raw.reasoning,
       remediation: raw.remediation,
+      ...(caveat ? { caveat: caveat.note } : {}),
     });
   }
 
