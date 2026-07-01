@@ -123,24 +123,31 @@ export async function generatePatches(
     const content = contents.get(relPath);
     if (content === undefined) continue;
 
-    const newContent = await generateNewContent(provider, candidate, content);
-    if (newContent === null) continue;
+    // Per-candidate isolation: one patch's LLM error/timeout, failed syntax check,
+    // or verify-command blow-up must never abort the batch (and thereby the whole
+    // audit). A failed candidate is simply skipped; the rest still generate.
+    try {
+      const newContent = await generateNewContent(provider, candidate, content);
+      if (newContent === null) continue;
 
-    const diff = createTwoFilesPatch(relPath, relPath, content, newContent, "before", "after");
-    const lang = languageOf(relPath);
-    const syntax = await parser.checkSyntax(newContent, lang);
+      const diff = createTwoFilesPatch(relPath, relPath, content, newContent, "before", "after");
+      const lang = languageOf(relPath);
+      const syntax = await parser.checkSyntax(newContent, lang);
 
-    let command: CommandOutcome | undefined;
-    if (syntax !== "error" && opts.verifyCommand) {
-      command = await runVerifyCommand(opts.repoRoot, relPath, newContent, opts.verifyCommand);
+      let command: CommandOutcome | undefined;
+      if (syntax !== "error" && opts.verifyCommand) {
+        command = await runVerifyCommand(opts.repoRoot, relPath, newContent, opts.verifyCommand);
+      }
+
+      patches.push({
+        findingId: candidate.finding.id,
+        filename: `${candidate.finding.id}.patch`,
+        diff,
+        status: decideStatus(syntax, command),
+      });
+    } catch {
+      // Best-effort: skip this candidate and continue with the others.
     }
-
-    patches.push({
-      findingId: candidate.finding.id,
-      filename: `${candidate.finding.id}.patch`,
-      diff,
-      status: decideStatus(syntax, command),
-    });
   }
 
   return patches;

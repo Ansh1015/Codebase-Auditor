@@ -153,16 +153,28 @@ export async function runAuditCli(
       passStats = audit.passStats;
 
       // Autonomous improvements: conservative single-file fixes, sandbox-verified.
+      // Best-effort: patch generation is an enhancement layered on the analysis.
+      // Its failure (a stuck/erroring LLM call, verify blow-up) must NEVER discard
+      // the completed findings — degrade to no patches and still write the report.
       if (config.patches && findings.length > 0) {
         const candidates = selectPatchable(findings, { maxPatches: MAX_PATCHES });
         if (candidates.length > 0) {
           log(pc.dim(`• Generating ${candidates.length} candidate patch(es)…`));
-          patches = await generatePatches(provider, parser, ingest.files, candidates, {
-            maxPatches: MAX_PATCHES,
-            repoRoot: resolved.dir,
-            ...(config.verifyCommand ? { verifyCommand: config.verifyCommand } : {}),
-          });
-          findings = attachPatchRefs(findings, patches);
+          try {
+            patches = await generatePatches(provider, parser, ingest.files, candidates, {
+              maxPatches: MAX_PATCHES,
+              repoRoot: resolved.dir,
+              ...(config.verifyCommand ? { verifyCommand: config.verifyCommand } : {}),
+            });
+            findings = attachPatchRefs(findings, patches);
+          } catch (err) {
+            patches = [];
+            log(
+              pc.yellow(
+                `  Patch generation failed (${err instanceof Error ? err.message : String(err)}); continuing with findings only.`,
+              ),
+            );
+          }
         }
       }
     } else {
