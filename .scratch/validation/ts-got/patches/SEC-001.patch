@@ -1,0 +1,49 @@
+Index: documentation/3-streams.md
+===================================================================
+--- documentation/3-streams.md	before
++++ documentation/3-streams.md	after
+@@ -241,19 +241,43 @@
+ ```
+ 
+ **Example: Filter headers when proxying to ServerResponse**
+ 
++> **WARNING — SSRF risk:** Never pass a user-supplied URL directly to `got.stream` (or any HTTP client) in a server-side context. Doing so allows attackers to probe internal networks, cloud metadata endpoints (e.g. `http://169.254.169.254/`), and localhost services. **You MUST validate the URL before making the request.** The example below shows the required validation: reject non-`https:` protocols and restrict the hostname to an explicit allowlist. Adapt the allowlist to your own requirements before deploying.
++
+ ```js
+ import {pipeline as streamPipeline} from 'node:stream/promises';
+ import got from 'got';
+ import express from 'express';
+ 
+ const app = express();
+ 
++// Allowlist of hostnames this proxy is permitted to reach.
++const ALLOWED_HOSTS = new Set(['api.example.com', 'cdn.example.com']);
++
+ // Allowlist specific headers when proxying
+ app.get('/proxy', async (request, response) => {
++	// Validate the caller-supplied URL before making any network request.
++	let target;
++	try {
++		target = new URL(request.query.url);
++	} catch {
++		response.status(400).send('Invalid URL');
++		return;
++	}
++
++	if (target.protocol !== 'https:') {
++		response.status(400).send('Only https URLs are allowed');
++		return;
++	}
++
++	if (!ALLOWED_HOSTS.has(target.hostname)) {
++		response.status(403).send('Host not allowed');
++		return;
++	}
++
+ 	await streamPipeline(
+-		got.stream(request.query.url).on('response', upstreamResponse => {
++		got.stream(target).on('response', upstreamResponse => {
+ 			// Only allow specific headers
+ 			for (const header of Object.keys(upstreamResponse.headers)) {
+ 				if (!['content-type', 'content-length'].includes(header.toLowerCase())) {
+ 					delete upstreamResponse.headers[header];

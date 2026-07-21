@@ -1,0 +1,42 @@
+Index: test/helpers/with-server.ts
+===================================================================
+--- test/helpers/with-server.ts	before
++++ test/helpers/with-server.ts	after
+@@ -69,14 +69,13 @@
+ 		try {
+ 			await run(t, server, preparedGot, clock);
+ 		} finally {
+ 			await server.close();
++			if (install) {
++				// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
++				(clock as InstalledClock).uninstall();
++			}
+ 		}
+-
+-		if (install) {
+-			// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+-			(clock as InstalledClock).uninstall();
+-		}
+ 	},
+ });
+ 
+ export const withBodyParsingServer = generateHook({install: false, options: {}});
+@@ -130,14 +129,13 @@
+ 		try {
+ 			await run(t, server, preparedGot, fakeTimer);
+ 		} finally {
+ 			await server.close();
++			if (installFakeTimer) {
++				// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
++				(fakeTimer as InstalledClock).uninstall();
++			}
+ 		}
+-
+-		if (installFakeTimer) {
+-			// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
+-			(fakeTimer as InstalledClock).uninstall();
+-		}
+ 	},
+ });
+ 
+ export const withHttpsServer = generateHttpsHook;

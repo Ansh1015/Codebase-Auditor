@@ -1,0 +1,19 @@
+Index: src/patch/run.ts
+===================================================================
+--- src/patch/run.ts	before
++++ src/patch/run.ts	after
+@@ -88,9 +88,13 @@
+     await cp(repoRoot, tmp, {
+       recursive: true,
+       filter: (src) => !/[\\/](\.git|node_modules|\.venv|dist|build)([\\/]|$)/.test(src),
+     });
+-    await writeFile(path.join(tmp, relPath), newContent, "utf8");
++    const dest = path.resolve(tmp, relPath);
++    if (!dest.startsWith(path.resolve(tmp) + path.sep)) {
++      return { ran: false, passed: false, detail: "Path traversal detected in relPath" };
++    }
++    await writeFile(dest, newContent, "utf8");
+     const { exitCode, stdout, stderr } = await execa(command, {
+       cwd: tmp,
+       shell: true,
+       reject: false,

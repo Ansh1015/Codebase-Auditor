@@ -1,0 +1,15 @@
+Index: src/passes/run.ts
+===================================================================
+--- src/passes/run.ts	before
++++ src/passes/run.ts	after
+@@ -156,9 +156,9 @@
+   let used = 0;
+   for (const path of map.ranked) {
+     const content = contentOf(path);
+     if (content === undefined) continue;
+-    const rendered = renderFileWithLineNumbers(path, content, 250);
++    const rendered = renderFileWithLineNumbers(path, content, opts.maxLinesPerFile);
+     if (used + rendered.length > opts.maxCharsPerComponent * 2 && parts.length > 0) break;
+     parts.push(rendered);
+     used += rendered.length;
+   }

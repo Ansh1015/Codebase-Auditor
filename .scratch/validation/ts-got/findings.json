@@ -1,0 +1,1730 @@
+{
+  "target": "got",
+  "generatedAt": "2026-06-29T11:14:08.514Z",
+  "commit": "66ca4e025622e1dd71f4e4f13aa6e1b79d61b069",
+  "healthScore": 0,
+  "counts": {
+    "critical": 0,
+    "high": 10,
+    "medium": 26,
+    "low": 22,
+    "info": 0
+  },
+  "findings": [
+    {
+      "id": "MNT-021",
+      "title": "Code examples use Unicode ellipsis (U+2026) which is invalid JavaScript syntax",
+      "category": "maintainability",
+      "severity": "high",
+      "confidence": {
+        "score": 0.98,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Any reader who copy-pastes the reset-options examples will get an immediate `SyntaxError: Unexpected token '…'` because U+2026 (…) is not valid JavaScript. This makes the documentation actively harmful for the primary use case of code examples.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "documentation"
+      ],
+      "evidence": [
+        {
+          "path": "documentation/2-options.md",
+          "startLine": 79,
+          "endLine": 89
+        }
+      ],
+      "reasoning": "Lines 79-89 contain eight invocations of the form `instance(…, {option: undefined})` where `…` is the Unicode HORIZONTAL ELLIPSIS character (U+2026), not the JavaScript spread operator `...` (three separate ASCII periods). Node.js will throw a SyntaxError on any of these lines. The surrounding prose explains these as runnable examples, not pseudocode.",
+      "remediation": "Replace every `…` on lines 79-89 with `'https://example.com'` (a concrete URL) or with the actual spread operator `...` if variadic arguments were intended. Alternatively, restructure as pseudocode with a clear comment that these are illustrative patterns rather than runnable code.",
+      "patchRef": "MNT-021.patch"
+    },
+    {
+      "id": "MNT-016",
+      "title": "SVG logo missing viewBox — cannot scale responsively",
+      "category": "maintainability",
+      "severity": "high",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "A logo asset is used at many sizes (navbar, favicon, OG image, docs). Without viewBox, width/height CSS overrides produce distorted or clipped output; the element is locked at exactly 416×172px unless the SVG is edited.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "media"
+      ],
+      "evidence": [
+        {
+          "path": "media/logo.svg",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ],
+      "reasoning": "media/logo.svg:1 declares `height=\"172\" width=\"416\"` but omits a `viewBox` attribute. Per SVG spec, without viewBox the coordinate system is fixed to those pixel values; scaling via CSS width/height merely changes the viewport while the internal coordinate space stays at 416×172, causing clipping or incorrect proportions in any context that isn't exactly that size.",
+      "remediation": "Add `viewBox=\"0 0 416 172\"` to the root `<svg>` element and remove or make the `width`/`height` attributes presentational (or drop them entirely so the SVG scales to its container). Result: `<svg viewBox=\"0 0 416 172\" xmlns=\"http://www.w3.org/2000/svg\">`.",
+      "patchRef": "MNT-016.patch"
+    },
+    {
+      "id": "TEST-001",
+      "title": "Clock uninstall runs outside finally, leaks fake timers on test failure",
+      "category": "testing",
+      "severity": "high",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "If the test body throws, the finally block closes the server but the clock uninstall never runs (lines 75-78, 136-139 are outside the try/finally). Subsequent tests in the same process run with fake timers still installed, causing non-deterministic, order-dependent failures that are extremely hard to debug.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 69,
+          "endLine": 78
+        },
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 130,
+          "endLine": 139
+        }
+      ],
+      "reasoning": "The try/finally on lines 69-73 guarantees server.close() runs, but clock.uninstall() at line 77 and fakeTimer.uninstall() at line 138 are sequenced after the block. Any rejected promise from run() will propagate through the finally, skipping the uninstall calls entirely. FakeTimers.install() patches global setTimeout/clearTimeout/setInterval/clearInterval; leaving those patches in place corrupts all subsequently running tests in the same worker.",
+      "remediation": "Move the uninstall call inside the finally block: `finally { await server.close(); if (install) (clock as InstalledClock).uninstall(); }`. Apply the same fix to generateHttpsHook.",
+      "patchRef": "TEST-001.patch"
+    },
+    {
+      "id": "MNT-011",
+      "title": "Global Error type shadowed by NodeJS.ErrnoException throughout 2500-line file",
+      "category": "maintainability",
+      "severity": "high",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Every occurrence of `Error` as a type annotation in source/core/index.ts resolves to NodeJS.ErrnoException, not globalThis.Error. This silently distorts the declared types of _beforeError's parameter, the WeakSet, and the return type of normalizeError, making type signatures misleading and hiding real type errors from the compiler and contributors.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/index.ts",
+          "startLine": 73,
+          "endLine": 73
+        },
+        {
+          "path": "source/core/index.ts",
+          "startLine": 182,
+          "endLine": 182
+        },
+        {
+          "path": "source/core/index.ts",
+          "startLine": 252,
+          "endLine": 252
+        }
+      ],
+      "reasoning": "Line 73 declares `type Error = NodeJS.ErrnoException;`. TypeScript resolves type names within the file scope before falling back to globals, so every subsequent use of `Error` as a type in this 2524-line module refers to NodeJS.ErrnoException. This affects `const errorsProcessedByHooks = new WeakSet<Error>()` (line 182), `normalizeError`'s return type (line 252), and `_beforeError(error: Error)` (line 468). Meanwhile normalizeError's body performs `instanceof globalThis.Error` checks (line 253) and constructs `new globalThis.Error(...)`, creating a structural mismatch between the declared and actual types that TypeScript cannot catch because the alias makes them nominally identical within the file.",
+      "remediation": "Remove the `type Error = NodeJS.ErrnoException;` alias. Annotate usages that require the errno-extension shape explicitly as `NodeJS.ErrnoException`, and use the standard `Error` for general error typing. This restores accurate compiler checking throughout the file."
+    },
+    {
+      "id": "SEC-001",
+      "title": "SSRF vulnerability in proxy example passes raw user input to got.stream",
+      "category": "security",
+      "severity": "high",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The proxy example passes `request.query.url` directly to `got.stream()` without any validation or allowlist. Developers copying this pattern into production will introduce a Server-Side Request Forgery vulnerability allowing attackers to probe internal network resources, cloud metadata endpoints (e.g. 169.254.169.254), or localhost services.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "documentation"
+      ],
+      "evidence": [
+        {
+          "path": "documentation/3-streams.md",
+          "startLine": 253,
+          "endLine": 265
+        }
+      ],
+      "reasoning": "Line 255 `got.stream(request.query.url)` feeds an HTTP query parameter directly into a network request inside an Express route handler. The comment says 'Allowlist specific headers' but there is no allowlisting of the URL itself, which is far more dangerous. The example presents itself as a production-quality proxy pattern, making it likely to be copied verbatim.",
+      "remediation": "Add explicit URL validation before the stream call: parse the URL with `new URL(request.query.url)`, verify its protocol is `https:`, and check its hostname against a hardcoded allowlist. Add a prominent warning block in the example explaining SSRF risk and that URL validation is mandatory before this code can be used safely.",
+      "patchRef": "SEC-001.patch"
+    },
+    {
+      "id": "PERF-002",
+      "title": "TLS certificate regenerated on every test invocation — O(seconds) per test",
+      "category": "scalability-performance",
+      "severity": "high",
+      "confidence": {
+        "score": 0.92,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Lines 55-75 of create-https-test-server.ts spawn two OpenSSL subprocesses (CSR + cert for CA, CSR + cert for server) on every test. Each invocation adds ~0.5–3 s depending on system entropy. With many HTTPS tests this dominates total test-suite runtime.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/create-https-test-server.ts",
+          "startLine": 55,
+          "endLine": 75
+        }
+      ],
+      "reasoning": "The CA and server certificates generated with default options (commonName='localhost', days=365) are identical across every call that doesn't override those options. There is no caching layer; `pify(pem.createCSR)` and `pify(pem.createCertificate)` are invoked unconditionally. For options-varying calls a cache keyed on the options would still hit the common case.",
+      "remediation": "Generate the default localhost CA+server cert pair once, lazily, and memoize it (a module-level `let cachedCerts: Promise<...> | undefined`). Pass the cached result to tests that don't need custom options. For tests that need non-default options, generate fresh certs."
+    },
+    {
+      "id": "ARCH-002",
+      "title": "Decompose monolithic `Options` and `Request` core modules",
+      "category": "architecture",
+      "severity": "high",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Two files carry the bulk of the library's behavior — `source/core/options.ts` (3466 LOC) and `source/core/index.ts` (2524 LOC). When normalization, validation, defaults, hook typing, cross-origin security state, and the request lifecycle all live in two god modules, every change has a wide blast radius, review cost is high, and the type/behavior coupling makes safe refactoring difficult.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/options.ts",
+          "startLine": 1,
+          "endLine": 250
+        },
+        {
+          "path": "source/core/index.ts",
+          "startLine": 1,
+          "endLine": 250
+        }
+      ],
+      "reasoning": "The `Options` module exports not just the class but the entire hook taxonomy (`Hooks`, `InitHook`, `BeforeRequestHook`, …) and the cross-origin security helpers (see imports in `source/core/index.ts:27-41`). `index.ts` then layers the full request state machine, error construction, redirect handling, and body serialization on top. This concentration is the root cause of the other smells below (duplicated security logic, hard-to-test branches): there is no module boundary at which to test or reason about a single concern in isolation.",
+      "remediation": "Extract cohesive sub-modules behind explicit interfaces: (a) hook type definitions into `core/hooks/types.ts`; (b) the cross-origin credential state machine into a dedicated `core/security/cross-origin.ts`; (c) body/form serialization out of `index.ts`. Keep `Options` as a thin orchestrator over normalizer functions so each normalizer is independently unit-testable."
+    },
+    {
+      "id": "CPLX-001",
+      "title": "`afterResponse` hook array is mutated in-place during iteration, creating retry-state fragility",
+      "category": "complexity",
+      "severity": "high",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Mutating `options.hooks.afterResponse` during iteration (line 136) is intentional per the comment, but it modifies shared mutable state on the `options` object that is reused across retries (line 226: `makeRequest(newRetryCount, request.options)`). On the next attempt the hook array has been truncated to the slice up to `index`. This is load-bearing but undocumented at the call site; any refactor that touches retry state management or reorders hook processing will silently break the deduplication invariant.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "as-promise"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 79,
+          "endLine": 79
+        },
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 132,
+          "endLine": 140
+        }
+      ],
+      "reasoning": "Line 79: `const hooks = options.hooks.afterResponse;` captures the reference. Line 136: `options.hooks.afterResponse = options.hooks.afterResponse.slice(0, index)` replaces the array on `options` so retries only see the truncated set. The mutation is effective but hidden: `options` escapes the closure (line 226), so the next `makeRequest` call receives options with a permanently mutated hook list. The retry semantics depend entirely on this side-effect, yet there is no invariant test for it.",
+      "remediation": "Separate the retry hook list from the options mutation. Pass a `hooksToRun` slice into the hook loop as a local variable without overwriting `options.hooks.afterResponse`. Instead, record the 'run-up-to' index and enforce it at the start of the next invocation, or document the invariant as an assertion in `makeRequest` so it's verifiable in tests."
+    },
+    {
+      "id": "DEBT-003",
+      "title": "HTTP alias methods spread an `Options` instance, silently dropping prototype methods",
+      "category": "technical-debt",
+      "severity": "high",
+      "confidence": {
+        "score": 0.83,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "If a caller passes an `Options` instance as the second argument to an alias (e.g. `got.get(url, myOptions)`), the spread `{...options, method}` copies only own enumerable properties. All prototype-resident methods (`merge`, `freeze`, `toJSON`, etc.) are lost, producing a plain object instead of an `Options` instance and leading to runtime errors inside `Request` or `makeRequest`.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "source/create.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/create.ts",
+          "startLine": 320,
+          "endLine": 320
+        }
+      ],
+      "reasoning": "Line 320 reads `got(url, {...options, method})`. Object spread is shallow and prototype-unaware. The declared type of `options` at that callsite is `Options` (a class instance), not the plain `OptionsInit` interface. Any consumer who builds an `Options` object and passes it to `got.get()` / `got.post()` / etc. will have their instance silently degraded to a plain object. The same issue exists on line 323 for the stream shortcuts.",
+      "remediation": "Pass `method` via a dedicated plain-object merge: `got(url, {method} as OptionsInit, options instanceof Options ? options : undefined)`, or add an `Options.withMethod(method)` helper that returns a properly-derived instance."
+    },
+    {
+      "id": "MNT-005",
+      "title": "`isGotInstance` identifies Got instances by `is.function` alone — fragile duck-typing",
+      "category": "maintainability",
+      "severity": "high",
+      "confidence": {
+        "score": 0.82,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Any callable value (a plain arrow function, a class constructor, a mocked test double) will be treated as a Got instance in `extend()`, causing silent runtime failures when `.defaults.options.merge()` is called on a missing property.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/create.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/create.ts",
+          "startLine": 26,
+          "endLine": 26
+        }
+      ],
+      "reasoning": "Line 26 gates the Got-instance branch in `got.extend()` on `is.function(value)`. Every Got instance is a function, but the inverse is not true. A caller who accidentally passes a plain function (e.g. `got.extend(myMiddleware)`) will enter the Got-instance branch, attempt `value.defaults.options.merge(...)`, and throw an unhelpful TypeError. The correct discriminant is checking for the `defaults` property (e.g. `'defaults' in value && is.function(value)`).",
+      "remediation": "Change line 26 to: `const isGotInstance = (value: Got | ExtendOptions): value is Got => is.function(value) && 'defaults' in value;`",
+      "patchRef": "MNT-005.patch"
+    },
+    {
+      "id": "MNT-014",
+      "title": "options.ts and index.ts are monolithic files exceeding 2500–3500 lines",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.99,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Files of this size are cognitively unmanageable, make merge conflicts in collaborative workflows near-certain, prevent incremental testing of subsystems, and degrade IDE tooling performance. A developer fixing a cache bug must scroll past retry, redirect, progress, and body logic to locate the relevant code.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/options.ts",
+          "startLine": 1,
+          "endLine": 3466
+        },
+        {
+          "path": "source/core/index.ts",
+          "startLine": 1,
+          "endLine": 2524
+        }
+      ],
+      "reasoning": "options.ts at 3466 lines combines the Options class, all hook type definitions (each with 50–100 lines of JSDoc), normalization logic, cross-origin utilities, cookie-jar interfaces, and DNS helpers. index.ts at 2524 lines combines the Request class, cache integration, redirect handling, retry orchestration, progress reporting, body finalization, and abort management. Both files violate the single-responsibility principle at the module level and make it impractical to understand any one concern in isolation.",
+      "remediation": "Extract cohesive subsections into dedicated modules: hook type declarations into `hooks.ts`, cross-origin logic into `cross-origin.ts`, cache integration into `cache.ts`, retry orchestration into `retry.ts`, and progress tracking into `progress.ts`. Keep Options and Request as thin orchestrators that import from these modules. This can be done incrementally without breaking the public API."
+    },
+    {
+      "id": "MNT-022",
+      "title": "Traffic measurement example dereferences socket without null check despite documented undefined risk",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The code example will throw `TypeError: Cannot read properties of undefined (reading 'bytesRead')` when a cached response is returned, because `stream.socket` is undefined in that case. The immediately preceding note block documents this exact risk, making the example self-contradictory.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "documentation"
+      ],
+      "evidence": [
+        {
+          "path": "documentation/tips.md",
+          "startLine": 120,
+          "endLine": 141
+        }
+      ],
+      "reasoning": "Lines 122-124 explicitly warn 'The socket may be `undefined` when using cached responses.' However, lines 130-132 access `stream.socket.bytesRead` and `stream.socket.bytesWritten` inside the `response` event handler without any guard. The `end` handler on line 136 has the same bug. Developers will copy this as-is and encounter intermittent crashes in production when the cache layer is active.",
+      "remediation": "Add a null guard before socket access: `if (stream.socket) { console.log(...stream.socket.bytesRead...); }`. Apply the same pattern to the `end` handler and to the Promise API variant on lines 151-159.",
+      "patchRef": "MNT-022.patch"
+    },
+    {
+      "id": "MNT-023",
+      "title": "Retry and rate-limiting examples use pipe() despite explicit doc warning to avoid it",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.96,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The documented tip at line 62 of 3-streams.md explicitly states 'Avoid `from.pipe(to)` as it doesn't forward errors.' The retry example at line 334 and the rate-limiting example at tips.md:193-195 both use `pipe()` anyway. Developers will either follow the tip and get confused by the examples, or follow the examples and silently swallow errors.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "documentation"
+      ],
+      "evidence": [
+        {
+          "path": "documentation/3-streams.md",
+          "startLine": 334,
+          "endLine": 334
+        },
+        {
+          "path": "documentation/tips.md",
+          "startLine": 193,
+          "endLine": 195
+        }
+      ],
+      "reasoning": "3-streams.md:62 says avoid `pipe()`. 3-streams.md:334 uses `stream.pipe(writeStream)` in the retry example and tips.md:193 uses `.pipe(new ThrottleTransform(...)).pipe(process.stdout)`. The retry case is particularly bad: a pipe error during retry will be silently dropped, defeating the purpose of the retry logic. Both should use `stream/promises.pipeline()` which propagates errors to a catchable promise rejection.",
+      "remediation": "Rewrite both examples to use `await streamPipeline(...)` from `node:stream/promises`. For the retry case, move stream setup into a factory function that can be called again on each retry event and wrap each pipeline call in try/catch."
+    },
+    {
+      "id": "DEBT-007",
+      "title": "Binary Illustrator source file committed to git without .gitattributes binary marker",
+      "category": "technical-debt",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Binary files in git bloat clone size on every checkout, produce unintelligible diffs (entire file shows as changed), and break `git log -p`, `git blame`, and PR review tooling. Without a `binary` declaration in .gitattributes, git may also corrupt the file on Windows due to CRLF normalization.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "media"
+      ],
+      "evidence": [
+        {
+          "path": "media/logo.ai",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ],
+      "reasoning": "media/logo.ai:1 begins with `%PDF-1.5` — a PDF-wrapped Adobe Illustrator binary. It is 1801 lines of binary/base64-encoded data. Without a `.gitattributes` entry such as `*.ai binary`, git treats it as text, attempts CRLF normalization on Windows, and generates useless diff output. Additionally, design source files of this kind have no role in a TypeScript CLI build pipeline and add permanent, irremovable bulk to every git clone.",
+      "remediation": "Add `*.ai binary` to `.gitattributes` immediately to prevent CRLF corruption. For longer term hygiene: evaluate whether the `.ai` source needs to live in this repo at all — if it's just a design artifact, store it in a design system or object storage (e.g. Figma, S3) and reference it by URL in a design doc. The compiled `logo.svg` is the only artifact the build pipeline needs."
+    },
+    {
+      "id": "MNT-006",
+      "title": "InstalledClock and GlobalClock typed as `any`, defeating type safety",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "`any` here propagates into every test that receives a `clock` or `fakeTimer` argument, silently accepting any property access. Real errors (e.g. calling a non-existent method) are invisible to the type checker.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/types.ts",
+          "startLine": 14,
+          "endLine": 15
+        }
+      ],
+      "reasoning": "`@sinonjs/fake-timers` exports `InstalledClock` and `Clock` directly. The comment at line 13 references a PR that has since landed. Using `any` means call-sites in with-server.ts (e.g. lines 39, 96) get no static guarantee that tick/uninstall exist, and the `as InstalledClock` casts at lines 77 and 138 provide zero narrowing.",
+      "remediation": "Import `type { InstalledClock, Clock } from '@sinonjs/fake-timers'` and replace the `any` aliases. If the PR linked in the comment is merged, remove the workaround entirely."
+    },
+    {
+      "id": "MNT-019",
+      "title": "Monolithic test files impede navigation and isolability",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Files of 4419, 3204, and 2217 lines cannot be understood or reviewed as a unit; IDE performance degrades; partial re-runs (`ava --match`) become the only escape hatch; merge conflicts on these files destroy productivity in a collaborative setting.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/hooks.ts",
+          "startLine": 1,
+          "endLine": 4419
+        },
+        {
+          "path": "test/redirects.ts",
+          "startLine": 1,
+          "endLine": 3204
+        },
+        {
+          "path": "test/pagination.ts",
+          "startLine": 1,
+          "endLine": 2217
+        }
+      ],
+      "reasoning": "Each file contains hundreds of independent test cases covering distinct sub-behaviors (hooks.ts covers at least: init hooks, beforeRequest hooks, beforeRedirect hooks, beforeRetry hooks, afterResponse hooks, beforeError hooks, cookie-jar behavior, agent behavior, context propagation). These are naturally grouped sub-concerns that should live in separate files. The current structure makes `grep`-based location of a specific test scenario an exercise in scrolling through thousands of lines.",
+      "remediation": "Split each file along semantic sub-topics: e.g., `test/hooks/init.ts`, `test/hooks/before-request.ts`, `test/hooks/after-response.ts`; `test/redirects/basic.ts`, `test/redirects/method-handling.ts`, `test/redirects/unix-socket.ts`. Shared helpers extracted per finding #1 become easy wins in this refactor."
+    },
+    {
+      "id": "MNT-007",
+      "title": "HttpServerOptions.bodyParser typed as NextFunction | false instead of options object",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.93,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "`NextFunction` is `(err?: any) => void`, a callback type. Spreading a function into body-parser's config object is a type-system lie that only works at runtime because body-parser ignores unknown keys. The `as any` cast at with-server.ts:31 is the downstream symptom. Real body-parser options (e.g. `{type: () => false}`) are structurally valid but typed incorrectly, so the compiler cannot catch bad option shapes.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/create-http-test-server.ts",
+          "startLine": 6,
+          "endLine": 8
+        },
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 25,
+          "endLine": 31
+        }
+      ],
+      "reasoning": "Line 7 of create-http-test-server.ts declares `bodyParser?: NextFunction | false`. The actual usage at with-server.ts lines 27-31 passes `{bodyParser: {type: () => false}}` — an options object, not a function. The spread at create-http-test-server.ts lines 25-35 would spread function enumerable properties (none by default), meaning the option is silently ignored, which may or may not match intent. The `as any` at line 31 of with-server.ts papers over the mismatch.",
+      "remediation": "Define a proper `BodyParserOptions` type (e.g. `{ type?: string | ((req: Request) => boolean) }`) and use that instead of `NextFunction`. Remove the `as any` cast in with-server.ts."
+    },
+    {
+      "id": "MNT-002",
+      "title": "Inner `catch (error)` silently shadows outer parse error reference",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.92,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The outer `error` (parse failure from `parseBody`) and the inner catch's `error` (UTF-8 decode failure) are both named identically. After the inner catch block exits, line 72 calls `normalizeError(error)` intending the *outer* parse error, but a reader cannot tell which binding is in scope without detailed knowledge of JavaScript catch-block scoping. This is a future-edit trap: swapping the inner name accidentally would silently change which error propagates.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "as-promise"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 62,
+          "endLine": 74
+        }
+      ],
+      "reasoning": "Line 62 opens `catch (error: unknown)`. Line 66 opens `catch (error)` which introduces a block-scoped binding that shadows the outer `error` only within its block. After that inner catch closes, line 72 uses `error` from the outer scope. The code is currently correct, but the identical names across nested catches make the control-flow fragile; a refactor that moves `normalizeError(error)` slightly would pick up the wrong error.",
+      "remediation": "Rename the inner catch binding: `catch (decodeError) { request._beforeError(new ParseError(normalizeError(decodeError), response)); return; }`. This makes the data flow unambiguous without changing behaviour."
+    },
+    {
+      "id": "CPLX-003",
+      "title": "`GotRequestFunction` has 24 overloads — combinatorial explosion that degrades TS performance and call-site ergonomics",
+      "category": "complexity",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "TypeScript resolves overloads sequentially from top to bottom at every call-site. 24 overloads means the compiler evaluates up to 24 type checks per `got(...)` invocation. It also produces misleading error messages and makes adding a new response type (e.g., `FormData`) a 6-overload surgery.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "source/types.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/types.ts",
+          "startLine": 167,
+          "endLine": 209
+        }
+      ],
+      "reasoning": "Lines 167–209 list 24 call signatures that are a mechanical cross-product of: {url+options, options-only} × {text, json, buffer, unknown, fallback} × {plain, wrapped, bodyOnly}. The `Only`/`Wrapped`/plain triad exists because TypeScript can't currently discriminate overloads by a single option property at the type level without explicit overloads. A tagged-union approach for `responseType` and `resolveBodyOnly` combined with a conditional return type would collapse this to 4–6 overloads.",
+      "remediation": "Introduce a discriminated union `ResponseSpec<T, R, BodyOnly>` and use a single conditional return type `ResolveResponse<ResponseSpec, BodyOnly>`. Expose 3–4 overloads (url+options, options-only, stream, internal) and let the conditional type handle the body/wrapping distinction. This is a non-trivial refactor but eliminates the N×M combinatorial surface."
+    },
+    {
+      "id": "DUP-007",
+      "title": "Extract shared test-server hook setup duplicated in `with-server.ts`",
+      "category": "duplication",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The HTTP and HTTPS test-harness factories repeat the fake-timer install, the `avaTest` context property, and the clock-tick handler wiring. Because nearly every integration test runs through these macros, divergence between the two paths silently changes test behavior for half the suite.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 22,
+          "endLine": 80
+        },
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 87,
+          "endLine": 141
+        }
+      ],
+      "reasoning": "`generateHook` (22-80) and `generateHttpsHook` (87-141) share three copy-pasted blocks: the `FakeTimers.install` configuration (34-39 vs 92-96), the non-enumerable `avaTest` context definition (41-47 vs 99-105), and the `handlers` array that calls `clock.tick(0)` on creation and on `response` (51-64 vs 109-122). The only real difference is the HTTPS certificate authority wiring.",
+      "remediation": "Factor out `installFakeClock()`, `makeAvaContext(title)`, and `makeTickHandler(clock)` helpers and have both macros compose them, so the HTTP/HTTPS paths cannot drift."
+    },
+    {
+      "id": "MNT-008",
+      "title": "caKey typed as Uint8Array but pem returns a string — masked by `as any`",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The declared type of `ExtendedHttpsTestServer.caKey` at line 21 is `Uint8Array`. The `pem` library returns PEM-encoded strings. Line 97 assigns `caKey as any` to suppress the error. Any consumer that trusts the declared type and passes `caKey` to a `Uint8Array` API will fail at runtime.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/create-https-test-server.ts",
+          "startLine": 21,
+          "endLine": 21
+        },
+        {
+          "path": "test/helpers/create-https-test-server.ts",
+          "startLine": 97,
+          "endLine": 97
+        }
+      ],
+      "reasoning": "`pem.createCertificate` resolves with `{ clientKey: string, certificate: string, ... }`. The type declaration says `caKey: Uint8Array` and `caCert: Uint8Array` (line 22), but `caCert` is used as a string in `certificateAuthority` at with-server.ts line 126. The `caKey as any` on line 97 is a compile-time suppression of a real runtime type mismatch.",
+      "remediation": "Change `caKey` and `caCert` in `ExtendedHttpsTestServer` to `string`. Remove the `as any` cast at line 97."
+    },
+    {
+      "id": "MNT-024",
+      "title": "Stream upload progress example passes numeric size as content-length header",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "HTTP headers are string key-value pairs. Passing a `number` as a header value is accepted by Node.js's http module but results in implicit coercion. More importantly, this contradicts the correct pattern shown in 2-options.md:297 (`fileStats.size.toString()`), creating inconsistent guidance that can confuse developers about the expected type.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "documentation"
+      ],
+      "evidence": [
+        {
+          "path": "documentation/3-streams.md",
+          "startLine": 131,
+          "endLine": 143
+        },
+        {
+          "path": "documentation/2-options.md",
+          "startLine": 294,
+          "endLine": 299
+        }
+      ],
+      "reasoning": "3-streams.md:131 passes `'content-length': size` where `size` is the return value of `fs.statSync().size` — a `number`. 2-options.md:297 correctly calls `.toString()`: `'content-length': fileStats.size.toString()`. The TypeScript type for `OutgoingHttpHeaders` allows `number` for content-length specifically, but the inconsistency across examples is a documentation quality issue that will cause confusion about the canonical pattern.",
+      "remediation": "Update 3-streams.md:131 to `'content-length': String(size)` to match the pattern in 2-options.md:297 and make all upload examples consistent."
+    },
+    {
+      "id": "MNT-026",
+      "title": "createTestServer options typed as `unknown`, erasing all call-site safety",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Every call to createTestServer accepts any argument silently. Misconfigured TLS or port options will not be caught by the type checker, making test-infrastructure bugs harder to surface during CI.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/types"
+      ],
+      "evidence": [
+        {
+          "path": "test/types/create-test-server/index.d.ts",
+          "startLine": 4,
+          "endLine": 4
+        }
+      ],
+      "reasoning": "Line 4 declares `options: unknown` for the factory function. Because `unknown` is the widest possible type, TypeScript cannot validate any property passed in — misspelled keys, wrong value types, missing required fields all pass silently. The options shape for a create-test-server call (port, certificate material, etc.) is a bounded, documentable set; this is an omission, not a deliberate design choice.",
+      "remediation": "Replace `unknown` with an explicit options interface inside the `createTestServer` namespace: `export type Options = { certificate?: string; key?: string; port?: number; ... }`. Then update line 4 to `function createTestServer(options?: Options): Promise<createTestServer.TestServer>`."
+    },
+    {
+      "id": "TEST-003",
+      "title": "Timing-based assertions create flaky tests in CI",
+      "category": "testing",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Wall-clock timing assertions fail non-deterministically under CPU contention (busy CI runners, VMs with shared cores), producing spurious red builds that erode trust in the test suite.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/hooks.ts",
+          "startLine": 100,
+          "endLine": 101
+        },
+        {
+          "path": "test/pagination.ts",
+          "startLine": 482,
+          "endLine": 500
+        }
+      ],
+      "reasoning": "hooks.ts:100–101 introduces a hard `delay(100)` inside a `beforeRequest` hook and then checks functional behavior, meaning the test is time-coupled for no test-correctness reason. pagination.ts:482–500 records `Date.now()` before and after an async iterator step to assert that the `backoff` option caused a delay of at least `backoff` ms; on a heavily loaded CI machine, the 200 ms window can be missed or the overhead can falsely satisfy the threshold.",
+      "remediation": "For hooks.ts:100: remove the `delay`; the async hook behavior doesn't require a real sleep to be tested. For pagination.ts:482: replace wall-clock assertion with a spy on `setTimeout`/`setInterval` using sinon fake timers (`sinon.useFakeTimers()`), then advance the clock programmatically and assert the iterator hasn't yielded yet, then advance past the backoff and assert it has."
+    },
+    {
+      "id": "CPLX-002",
+      "title": "`MergeExtendsConfig` recursive conditional type imposes TypeScript compile-time cost and is unmaintainable",
+      "category": "complexity",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Deeply recursive conditional types are evaluated eagerly by `tsc` for every `got.extend(...)` call-site. At scale this produces quadratic type-checking time. The type is also opaque enough that a future developer touching `extend()` semantics will likely break it silently.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "source/types.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/types.ts",
+          "startLine": 320,
+          "endLine": 341
+        }
+      ],
+      "reasoning": "Lines 320–341 implement a tail-recursive type-level fold over a variadic tuple using six levels of conditional nesting. TypeScript's instantiation depth limit (100 by default) constrains how many arguments `.extend()` can accept. The type is also incorrect for zero-argument calls (returns `never` on line 341). `type-fest`'s `Spread` (already used at line 1) combined with a simpler two-argument overload would cover 99% of real-world usage without the recursion.",
+      "remediation": "Replace the recursive type with explicit overloads for 1–4 arguments (covering real-world usage), using `Spread` from `type-fest` for pairwise merging. Fall back to `ExtendOptions` for the N-argument variadic case. This removes the recursion, the `never` edge, and the instantiation-depth risk."
+    },
+    {
+      "id": "DUP-002",
+      "title": "Duplicate context/handler/clock setup between generateHook and generateHttpsHook",
+      "category": "duplication",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The Object.defineProperty avaTest pattern (lines 41-47 and 99-105), the got handler that calls clock.tick(0) on response (lines 51-64 and 109-122), and the try/finally server close (lines 69-73 and 130-134) are structurally identical. Any bug fixed in one must be manually fixed in the other — as evidenced by the clock-uninstall ordering bug existing in both.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 22,
+          "endLine": 80
+        },
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 87,
+          "endLine": 141
+        }
+      ],
+      "reasoning": "Roughly 35 of the ~55 lines of logic in the two functions are copy-pasted. The HTTP/HTTPS difference is limited to the server factory call and the `https` got option block. This is the classic 'parallel evolution' duplication pattern: divergent fixes in one copy that should apply to both.",
+      "remediation": "Extract a `buildGotContext(t)` helper for the Object.defineProperty pattern and a `buildClockHandler(clock)` helper for the got handler. The outer exec can then call those helpers; the HTTP/HTTPS branching remains only for server creation and got options."
+    },
+    {
+      "id": "DEBT-002",
+      "title": "Potential duplicate named export of `Options` in barrel",
+      "category": "technical-debt",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "When two export statements in the same module resolve to the same binding name, the ESM spec requires the host to throw a `SyntaxError`. Even if TypeScript suppresses the error (explicit named export shadows `export *`), the intent is ambiguous and the barrel is fragile to refactors inside `options.js`.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/index.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/index.ts",
+          "startLine": 15,
+          "endLine": 16
+        }
+      ],
+      "reasoning": "Line 15 re-exports the *default* export of `./core/options.js` under the name `Options`. Line 16 does `export * from './core/options.js'`, which re-exports all *named* exports from that module. If `options.js` also has a named export called `Options` (the class itself), both lines contribute an `Options` binding to the barrel. TypeScript resolves this by giving the explicit re-export precedence, but bundlers and some runtimes may behave differently, and the intent is unclear.",
+      "remediation": "If the goal is to expose the class as `Options`, keep only line 15 (`export {default as Options}`) and add individual named re-exports instead of the blanket `export *`, or verify that `options.js` does not have a same-named named export and document why both statements coexist."
+    },
+    {
+      "id": "MNT-012",
+      "title": "Non-null assertion on options.url in ParseError constructor can crash on undefined URL",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "When a parse failure occurs before the URL is resolved (e.g. when using prefixUrl only), the non-null assertion dereferences undefined, replacing the meaningful ParseError with an unrelated TypeError that obscures the actual failure.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/response.ts",
+          "startLine": 150,
+          "endLine": 150
+        }
+      ],
+      "reasoning": "NormalizedOptions declares `url: URL | undefined` (options.ts line 98). ParseError's constructor at response.ts:150 calls `stripUrlAuth(options.url!)`. If a response is received and parsing fails before `options.url` is set to a full URL—possible when prefixUrl is used alone—the non-null assertion throws a TypeError inside the error constructor itself, swallowing the original parse failure.",
+      "remediation": "Replace `options.url!` with a safe fallback: `options.url ? stripUrlAuth(options.url) : 'unknown URL'`."
+    },
+    {
+      "id": "TEST-002",
+      "title": "Shared mutable Error singleton pollutes cross-test state",
+      "category": "testing",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "JavaScript Error objects are mutable. A hook or framework code that attaches properties to the error (e.g., `error.response`, `error.code`) between tests will mutate the singleton and cause later tests that compare against the pristine error to observe unexpected state.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/hooks.ts",
+          "startLine": 24,
+          "endLine": 25
+        }
+      ],
+      "reasoning": "Lines 24–25 declare `const errorString = 'oops'` and `const error = new Error(errorString)` at module scope. This `error` instance is then thrown by hooks in at least 10 separate tests (lines 114, 127, 143, 158, 189, 220, 237, 253, 270, 286). Got's `RequestError` wraps the original error and may attach `.options`, `.response`, or `.code` to it. If any such mutation occurs, subsequent assertions like `{message: errorString}` can still pass, but structural equality checks or identity comparisons in later tests may observe accumulated state. The safe pattern is `new Error(errorString)` inline in each test or in a `beforeEach` factory.",
+      "remediation": "Replace the module-level `error` singleton with a local `new Error(errorString)` inside each test, or use a factory `const makeError = () => new Error(errorString)` and call it at each use site."
+    },
+    {
+      "id": "DEBT-005",
+      "title": "makeProgress reports 100% complete when total=0 and transferred=0",
+      "category": "technical-debt",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.83,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "A request whose Content-Length is 0 will immediately emit a downloadProgress event with percent=1 before any data is received, corrupting progress listeners that drive UI indicators, throttling, or completion detection.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/index.ts",
+          "startLine": 285,
+          "endLine": 293
+        }
+      ],
+      "reasoning": "In makeProgress (line 285), `if (total)` is falsy when total is 0. Control falls to `else if (total === transferred)`, which evaluates `0 === 0` as true and sets percent = 1. This fires at the very start of a zero-content-length download, when transferred is also 0, producing a premature completion signal. The intent of the else-if branch—signal completion once all bytes have arrived—is defeated because it does not distinguish `total === undefined` from `total === 0`.",
+      "remediation": "Replace the condition with explicit undefined checks: `if (total !== undefined && total > 0) { percent = transferred / total; } else if (total !== undefined && transferred > 0 && transferred === total) { percent = 1; }`. This correctly leaves percent at 0 for unknown-length downloads and only sets 1 when all non-zero bytes have been transferred."
+    },
+    {
+      "id": "MNT-004",
+      "title": "`Object.defineProperties` used to forward event-emitter methods is an opaque structural hack",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.82,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Bulk-copying all own property descriptors from one promise to another (line 270) is a non-obvious mechanism to forward `.on`/`.once`/`.off`/`.json`/`.buffer`/`.text` to the shortcut promise. It copies *every* own descriptor including any non-enumerable, getter, or symbol properties, which may have unintended side-effects if the source promise is augmented in the future. It also triggers the `@typescript-eslint/no-floating-promises` lint rule on the return value, requiring a suppresssion comment.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "as-promise"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 269,
+          "endLine": 272
+        }
+      ],
+      "reasoning": "Line 270: `Object.defineProperties(newPromise, Object.getOwnPropertyDescriptors(promiseToAwait))`. `getOwnPropertyDescriptors` is a broad scoop—it copies accessor descriptors, non-enumerable props, and symbol-keyed props. Any future addition to the promise (e.g., a cancellation token or abort controller property) will be silently forwarded, potentially with shared mutable state between the original and shortcut promises. The eslint-disable at line 269 is itself a code smell: the rule fires because the return value (a Promise) is discarded, indicating the API is being misused for its side-effect.",
+      "remediation": "Explicitly forward only the known methods by name: `for (const key of ['on','once','off','json','buffer','text'] as const) { Object.defineProperty(newPromise, key, { value: (promiseToAwait as any)[key], writable: true, configurable: true }); }`. This makes the forwarding intent explicit, eliminates the lint suppression, and is robust against future property additions."
+    },
+    {
+      "id": "DEBT-010",
+      "title": "Resolve type-system escape hatches and FIXMEs in the shared test harness",
+      "category": "technical-debt",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.8,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The most-imported test helper suppresses type errors in the exact place the public hook/handler types should be validated, so a regression in those signatures is hidden from every test that uses the harness.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 24,
+          "endLine": 30
+        },
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 57,
+          "endLine": 57
+        },
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 115,
+          "endLine": 115
+        }
+      ],
+      "reasoning": "The default hook casts the body-parser config `as any` behind a stale comment referencing issue #1186 (24-30), and the same `@ts-expect-error FIXME: Incompatible union type signatures` is duplicated at lines 57 and 115 to make `result.on('response', …)` type-check. The repetition signals a genuine gap in the public `Request`/handler union types rather than a one-off test quirk — and it is concentrated in `with-server.ts`, the highest-importance test file.",
+      "remediation": "Fix the underlying handler `result` union type in `source/core` so the `.on('response')` call type-checks, then delete both `@ts-expect-error` suppressions. Re-evaluate whether the #1186 body-parser workaround is still needed and remove the `as any` cast or replace it with a typed parser stub."
+    },
+    {
+      "id": "DEBT-001",
+      "title": "`globalResponse` is accessed without null-safety in `shortcut` after potential non-response rejection paths",
+      "category": "technical-debt",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.78,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "If the main promise settles through a path that doesn't go through the `response` event handler (e.g., a connection error before any response arrives where `throwHttpErrors` is false and an HTTPError is resolved via `onError`), `globalResponse` may not be set. The `shortcut` async IIFE accesses `globalResponse.request` (line 259) only after awaiting the main promise, so a rejection avoids the access—but in an `HTTPError`-suppressed resolve path (line 189 in `onError`) `globalResponse` is set at line 151 of the response handler. The variable is typed as `Response` (non-nullable) yet carries no definite-assignment assertion, so TypeScript's strict-mode flow analysis is the only guard, and it cannot verify cross-closure initialization.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "as-promise"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 37,
+          "endLine": 37
+        },
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 259,
+          "endLine": 259
+        }
+      ],
+      "reasoning": "Line 37: `let globalResponse: Response;` — no initializer. Line 259: `const {options} = globalResponse.request;` — unconditional dereference inside the async IIFE after the outer promise resolves. Under `exactOptionalPropertyTypes` + `strict`, TypeScript allows this because the variable is in the definite-assignment flow from the closure, but the compiler cannot verify that all resolve paths pass through the response handler. A defensive `globalResponse!` or typed `| undefined` with a guard would surface the invariant.",
+      "remediation": "Use a definite-assignment assertion to document the invariant: `let globalResponse!: Response;`. Additionally, add a guard in `shortcut`: `if (!globalResponse) throw new Error('No response captured');` to fail fast with a clear message rather than a TypeError on property access."
+    },
+    {
+      "id": "TEST-004",
+      "title": "Restore coverage on timeout branches excluded via `istanbul ignore`",
+      "category": "testing",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.78,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Timeout handling guards against hung connections and resource exhaustion. Explicitly excluding its socket/connect branches from coverage means correctness-critical, security-relevant paths can regress without any test failing.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/timed-out.ts",
+          "startLine": 95,
+          "endLine": 95
+        },
+        {
+          "path": "source/core/timed-out.ts",
+          "startLine": 134,
+          "endLine": 134
+        },
+        {
+          "path": "source/core/timed-out.ts",
+          "startLine": 167,
+          "endLine": 167
+        }
+      ],
+      "reasoning": "`timed-out.ts` carries `/* istanbul ignore next */` on the error-rethrow path (95) and `/* istanbul ignore next: hard to test */` on the `socket.connecting` connect/send timeout branches (134, 167). These are the branches that decide whether lookup/connect/secureConnect/send timeouts arm at all. The 'hard to test' annotations suggest the branches are reachable in production but the harness cannot currently exercise them — the riskiest combination.",
+      "remediation": "Use a controllable socket (a raw `net` server via the existing `test/helpers/server-tools.ts:createRawHttpServer`, or a stubbed socket whose `connecting`/events are driven manually) to exercise the connecting-socket lookup/connect/secureConnect/send paths, then remove the ignore pragmas as coverage is established."
+    },
+    {
+      "id": "ARCH-001",
+      "title": "Mutable `iteration` closure counter allows handler to corrupt chain if `next` is called multiple times",
+      "category": "architecture",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.75,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The handler protocol has no documented constraint on single-call semantics for `next`. If any handler calls `next` twice (e.g., for retry logic inside a handler), the counter advances past the intended slot, skipping handlers or calling `lastHandler` prematurely and causing the request to fire unexpectedly.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "source/create.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/create.ts",
+          "startLine": 109,
+          "endLine": 134
+        }
+      ],
+      "reasoning": "Lines 109–110 declare `let iteration = 0` in the `makeRequest` closure, and `iterateHandlers` at line 111 reads and increments that shared counter via `iteration++`. The counter is not reset per `next` call. A handler that calls `next(options)` twice (for A/B testing, retry, or wrapping) would advance `iteration` to `N+1` on the second call, skipping the next registered handler. There is no guard or assertion enforcing single invocation.",
+      "remediation": "Pass the current index as a parameter rather than capturing it in a closure: `const iterateHandlers = (newOptions: Options, index = 0): GotReturn => { const handler = defaults.handlers[index] ?? lastHandler; return handler(newOptions, opts => iterateHandlers(opts, index + 1)) as GotReturn; };`. This makes double-call idempotent."
+    },
+    {
+      "id": "SEC-002",
+      "title": "Consolidate hand-rolled cross-origin credential-stripping logic",
+      "category": "security",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.6,
+        "level": "medium"
+      },
+      "impact": {
+        "rationale": "Preventing Authorization/Cookie leakage across origins on redirect is security-critical. Here it is implemented as a bespoke snapshot/diff state machine spread across two large files, so a regression that leaks credentials cross-origin is easy to introduce and hard to spot in review.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/options.ts",
+          "startLine": 58,
+          "endLine": 70
+        },
+        {
+          "path": "source/core/index.ts",
+          "startLine": 27,
+          "endLine": 41
+        }
+      ],
+      "reasoning": "`CrossOriginState` (options.ts:58-70) is an 11-field bag of headers, credential flags, body/json/form values and their snapshots. The decision logic — `crossOriginStripHeaders`, `isCrossOriginCredentialChanged`, `snapshotCrossOriginState`, `hasExplicitCredentialInUrlChange`, `isBodyUnchanged`, `isSameOrigin` — is imported into `index.ts:27-41` and woven into the redirect path. Security invariants implemented as scattered free functions over a mutable snapshot struct are exactly the kind of code that drifts when adjacent logic changes.",
+      "remediation": "Collapse this into a single audited `cross-origin` module that owns `CrossOriginState` and exposes one `stripCredentialsIfCrossOrigin(prev, next)` entry point. Add focused unit tests asserting Authorization/Cookie/body are dropped on origin change and preserved on same-origin redirects, independent of the full request stack."
+    },
+    {
+      "id": "DUP-003",
+      "title": "Duplicate `createStaticCookieJar` across test modules",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 1,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Identical helper defined twice means divergence risk: a future change to cookie-jar shape (e.g. adding `sameSite`) must be applied in both files independently, and the omission in one file will produce subtle test-coverage gaps.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/hooks.ts",
+          "startLine": 60,
+          "endLine": 65
+        },
+        {
+          "path": "test/pagination.ts",
+          "startLine": 21,
+          "endLine": 26
+        }
+      ],
+      "reasoning": "The function `createStaticCookieJar` at hooks.ts:60–65 and pagination.ts:21–26 are byte-for-byte identical. Both files also import from `./helpers/with-server.js`, so a shared export from a test helper module (e.g., `test/helpers/cookie-jar.ts`) is the natural home for it.",
+      "remediation": "Extract `createStaticCookieJar` into `test/helpers/cookie-jar.ts`, export it, and import it in both files."
+    },
+    {
+      "id": "DUP-004",
+      "title": "`finiteHandler` and `relativeHandler` are identical, dead duplication",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 1,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Two named functions with distinct semantic intent (`finite` vs `relative` redirect) are identical bodies; the distinction is fictional, which misleads readers about what each test is actually exercising.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/redirects.ts",
+          "startLine": 23,
+          "endLine": 35
+        }
+      ],
+      "reasoning": "`finiteHandler` (redirects.ts:23–28) and `relativeHandler` (redirects.ts:30–35) both issue `302 → /` with no distinguishing behavior. The only difference is the variable name. The reader cannot tell from these definitions whether the tests are truly distinguishing `finite` from `relative` semantics, or whether one name is a copy-paste artifact.",
+      "remediation": "Unify into a single `redirectToRootHandler` and update references. If the tests genuinely require distinct semantics, add the distinguishing logic (e.g., absolute vs. relative Location URL)."
+    },
+    {
+      "id": "MNT-025",
+      "title": "Typo 'overriden' in stream retryCount note",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 1,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Minor credibility issue; 'overriden' should be 'overridden'. Low impact but trivially fixed.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "documentation"
+      ],
+      "evidence": [
+        {
+          "path": "documentation/3-streams.md",
+          "startLine": 95,
+          "endLine": 95
+        }
+      ],
+      "reasoning": "Line 95 reads 'Must be overriden when retrying.' The correct spelling is 'overridden' (double-d).",
+      "remediation": "Change 'overriden' to 'overridden' on line 95."
+    },
+    {
+      "id": "MNT-001",
+      "title": "Generic parameter named `ReturnType` shadows built-in TypeScript utility type",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Naming a generic parameter `ReturnType` shadows the globally available `ReturnType<T>` utility type within that scope, causing silent confusion for any reader or tooling that expects the built-in. IDEs and type-hover will show the local binding, not the global one, making the type harder to audit.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "as-promise/types"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/types.ts",
+          "startLine": 11,
+          "endLine": 11
+        }
+      ],
+      "reasoning": "Line 11 declares `json: <ReturnType>() => RequestPromise<ReturnType>`. `ReturnType` is a well-known TypeScript built-in conditional utility type. Reusing it as a free generic parameter name is legal but violates the principle of least surprise; any author who writes `ReturnType` expecting the built-in inside this scope will get the wrong type silently.",
+      "remediation": "Rename to `TReturn`, `T`, or `JsonReturnType`: `json: <TReturn>() => RequestPromise<TReturn>`."
+    },
+    {
+      "id": "MNT-013",
+      "title": "http2 agent typed as unknown | false, providing zero type safety",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Because `unknown | false` collapses to `unknown`, TypeScript accepts any value for the HTTP/2 agent, silently allowing type-incorrect configuration that will crash at runtime when the agent is used.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/options.ts",
+          "startLine": 54,
+          "endLine": 54
+        }
+      ],
+      "reasoning": "The `Agents` type at line 54 declares `http2?: unknown | false`. In TypeScript, `unknown | false` is equivalent to `unknown` because `false` is a subtype of `unknown`. The http2-wrapper package already has an exported agent/session type—`ClientHttp2Session` is imported at line 23—so a more specific type is available. Leaving it as `unknown` means callers receive no compile-time feedback when passing an incompatible value.",
+      "remediation": "Import the HTTP/2 agent type from http2-wrapper (e.g. `type Http2Agent`) and replace `unknown | false` with `Http2Agent | false`. If no public agent type is exported, document the `unknown` as intentional with a TODO and a link to the upstream issue."
+    },
+    {
+      "id": "DUP-001",
+      "title": "Reimport `Except` and `Merge` from `type-fest` instead of redefining locally",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "`type-fest` is already imported on line 1 and exports both `Except` and `Merge` with identical semantics. Local copies diverge silently if `type-fest` semantics change and add maintenance surface with no benefit.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/types.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/types.ts",
+          "startLine": 9,
+          "endLine": 10
+        }
+      ],
+      "reasoning": "Lines 9–10 of `source/types.ts` hand-roll `Except<O,K>` and `Merge<A,B>` as verbatim copies of the `type-fest` definitions. The same file already imports `Spread` from `type-fest` (line 1), so the package is a declared dependency. Two definitions for the same utility type means any downstream fix or edge-case handling in `type-fest` is not picked up, and a future reader has to confirm the local copies are actually equivalent.",
+      "remediation": "Replace lines 9–10 with `import type {Except, Merge, Spread} from 'type-fest';` and delete the local definitions."
+    },
+    {
+      "id": "DUP-006",
+      "title": "Deduplicate `createStaticCookieJar` test helper across suites",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Identical helper logic copied into multiple test files drifts over time, so the same cookie-jar contract gets tested against subtly different stubs and fixes have to be applied in N places.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/hooks.ts",
+          "startLine": 60,
+          "endLine": 65
+        },
+        {
+          "path": "test/pagination.ts",
+          "startLine": 21,
+          "endLine": 26
+        }
+      ],
+      "reasoning": "`createStaticCookieJar` is defined byte-for-byte identically in `test/hooks.ts:60-65` and `test/pagination.ts:21-26`. There is already a shared `test/helpers/` package (with-server, server-tools), so the absence of a shared cookie-jar stub is an oversight, not a constraint.",
+      "remediation": "Move `createStaticCookieJar` into `test/helpers/` (e.g. `server-tools.ts`) and import it in both suites."
+    },
+    {
+      "id": "MNT-020",
+      "title": "Fragile URL query-string parsing via string split in test helper",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Using `request.url.split('?')[1]` silently yields `undefined` when there is no query string, causing `new URLSearchParams(undefined)` to produce an empty object rather than failing loudly, masking test setup bugs.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/pagination.ts",
+          "startLine": 31,
+          "endLine": 31
+        }
+      ],
+      "reasoning": "pagination.ts:31 — `const searchParameters = new URLSearchParams(request.url.split('?')[1]);` — if the server ever receives a request without a query string (e.g., the paginator constructs the URL incorrectly), `split('?')[1]` returns `undefined`, `URLSearchParams` coerces that to the string `'undefined'`, and `searchParameters.get('page')` returns `null`, so `page` defaults to 1 silently. A full URL parse would throw or make the error obvious.",
+      "remediation": "Replace with `new URL(request.url, 'http://localhost').searchParams` which handles the no-query-string case cleanly and doesn't depend on string splitting."
+    },
+    {
+      "id": "MNT-003",
+      "title": "Generic type parameter `T` in `shortcut` shadows the outer function's `T`",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.93,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Two `T` type parameters in the same closure serve entirely different purposes: the outer `T` (line 35) is the full response generic, while the inner `T` (line 254) is the shortcut's return type. Their shadowing creates a type-level ambiguity that can mislead maintainers and inhibits TypeScript's ability to propagate the outer `T` constraint into the nested function.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "as-promise"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 35,
+          "endLine": 35
+        },
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 254,
+          "endLine": 254
+        }
+      ],
+      "reasoning": "Line 35: `function asPromise<T>`. Line 254: `const shortcut = <T>(promiseToAwait, responseType)`. Inside `shortcut`, any reference to `T` resolves to the local binding. The two `T`s are unrelated: the outer controls the promise resolution type while the inner controls the shortcut's decoded type. This is a latent confusion risk for any future type-level work on these generics.",
+      "remediation": "Rename the `shortcut` generic to `TBody` or `TResult`: `const shortcut = <TBody>(promiseToAwait: RequestPromise, responseType: Options['responseType']): RequestPromise<TBody>`."
+    },
+    {
+      "id": "DEBT-008",
+      "title": "`as any` type escape hatches weaken type-safety guarantees in tests",
+      "category": "technical-debt",
+      "severity": "low",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Using `as any` on spy setup (hooks.ts:89) and on a complex DNS mock (redirects.ts:117–124) means TypeScript will not catch breakage if the `HttpAgent` API or Node's dns lookup signature changes, leaving silent runtime failures as the only detection mechanism.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/hooks.ts",
+          "startLine": 89,
+          "endLine": 89
+        },
+        {
+          "path": "test/redirects.ts",
+          "startLine": 117,
+          "endLine": 124
+        }
+      ],
+      "reasoning": "hooks.ts:89 — `sinon.spy(agent, 'addRequest' as any)` — `addRequest` is a public method on `HttpAgent`; the `as any` is not necessary and suggests a sinon typing mismatch that should be fixed at the type level. redirects.ts:117–124 — the inline DNS lookup mock is cast `as any` because its overloaded signature is complex, but this should be typed with the proper `dns.LookupFunction` type from `@types/node`.",
+      "remediation": "For hooks.ts:89: use `sinon.spy<HttpAgent, 'addRequest'>(agent, 'addRequest')` with proper generics. For redirects.ts:117: type the mock as `import type {LookupFunction} from 'node:net'` (or `dns.lookup`'s signature) and remove the `as any` cast."
+    },
+    {
+      "id": "DUP-005",
+      "title": "Repeated pagination-option validation tests should be parameterized",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Four structurally identical tests (lines 302–349) each test one missing `pagination` option, differing only in which options are preset. Adding a new required pagination property requires a fifth copy; missing one leaves a gap in coverage with no compiler warning.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test"
+      ],
+      "evidence": [
+        {
+          "path": "test/pagination.ts",
+          "startLine": 302,
+          "endLine": 349
+        }
+      ],
+      "reasoning": "pagination.ts:302–349 contains four nearly identical test bodies that each build a slightly longer `pagination` config and assert `iterator.next()` throws. The pattern is: reset all → add one property → assert throws. This is a textbook candidate for a data-driven/parameterized test: an array of `[description, partialConfig]` pairs iterated with `for ... of` and `test()`.",
+      "remediation": "Convert to a parameterized loop: `const cases = [['no transform', {}], ['no shouldContinue', {transform: thrower}], ...]; for (const [label, config] of cases) { test(label, async t => { ... }); }`."
+    },
+    {
+      "id": "MNT-017",
+      "title": "SVG unminified to a single unreadable line — unfeasible to review or patch",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Any future change to the SVG (color token update, accessibility `<title>` addition, path correction) requires external tooling or a full rewrite because the file has no human-readable structure. PR diffs will show a single massive line changed, making review impossible.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "media"
+      ],
+      "evidence": [
+        {
+          "path": "media/logo.svg",
+          "startLine": 1,
+          "endLine": 1
+        }
+      ],
+      "reasoning": "media/logo.svg is exactly 1 line containing the entire SVG. There are two `<path>` elements and no accessibility metadata (`<title>`, `<desc>`). The compact form is fine for a production build output but not for a source-controlled asset that humans may need to maintain.",
+      "remediation": "Store the formatted (pretty-printed) SVG in source control and add a build step that minifies it for distribution if bundle size matters. Also add a `<title>` child element (e.g. `<title>Logo</title>`) for accessibility — without it, screen readers and SVG-embedding contexts have no label for the image."
+    },
+    {
+      "id": "MNT-010",
+      "title": "`(server as any).caCert` bypasses ExtendedHttpsTestServer type",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The `as any` cast at with-server.ts:125 defeats the type declaration of `ExtendedHttpsTestServer` that already declares `caCert`. If `caCert` is renamed or removed in the server type, this access silently becomes `undefined` at runtime with no compile-time error.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/with-server.ts",
+          "startLine": 125,
+          "endLine": 125
+        },
+        {
+          "path": "test/helpers/create-https-test-server.ts",
+          "startLine": 22,
+          "endLine": 22
+        }
+      ],
+      "reasoning": "`ExtendedHttpsTestServer` at line 22 of create-https-test-server.ts declares `caCert: Uint8Array`. The server variable at with-server.ts:89 is already typed as `ExtendedHttpsTestServer`, so `server.caCert` should resolve without a cast. The `as any` is a symptom of the type mismatch finding above (Uint8Array vs string): once that is fixed the cast becomes unnecessary.",
+      "remediation": "Fix the `caKey`/`caCert` type to `string` (per finding above), then access `server.caCert` directly without any cast."
+    },
+    {
+      "id": "PERF-001",
+      "title": "`new URL(options.url)` constructed on every afterResponse hook iteration",
+      "category": "scalability-performance",
+      "severity": "low",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "URL parsing is non-trivial. Constructing a new `URL` object on every iteration of the afterResponse hook loop (line 82) means `N` allocations for `N` hooks, even though the URL value is fixed for a given response. In practice most requests have one or two afterResponse hooks, but it is wasted work that could accumulate in high-throughput scenarios or in test harnesses running many redirects.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "as-promise"
+      ],
+      "evidence": [
+        {
+          "path": "source/as-promise/index.ts",
+          "startLine": 82,
+          "endLine": 83
+        }
+      ],
+      "reasoning": "Line 82: `const previousUrl = options.url ? new URL(options.url) : undefined;` is inside the `for...of` loop that iterates over `hooks.entries()`. Both `previousUrl` and `previousState` (line 83) are computed from state that does not change between hook iterations. They should be hoisted out of the loop.",
+      "remediation": "Hoist the two computations before the loop:\n```ts\nconst previousUrl = options.url ? new URL(options.url) : undefined;\nconst previousState = previousUrl ? snapshotCrossOriginState(options) : undefined;\nfor (const [index, hook] of hooks.entries()) { ... }\n```"
+    },
+    {
+      "id": "DEBT-004",
+      "title": "Redundant double-assignment of `isStream` flag on `Request` options",
+      "category": "technical-debt",
+      "severity": "low",
+      "confidence": {
+        "score": 0.87,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The duplicated assignment obscures the actual control flow and makes it unclear whether the `cloneWithProperty` path (lines 82–83) is reliable. Future maintainers may remove one assignment believing it is dead code, breaking either the plain-object or class-instance path.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/create.ts"
+      ],
+      "evidence": [
+        {
+          "path": "source/create.ts",
+          "startLine": 82,
+          "endLine": 89
+        }
+      ],
+      "reasoning": "Lines 82–83 clone the incoming url/options object with `isStream: true` before constructing the `Request`. Lines 87–89 then unconditionally set `request.options.isStream = true` again on the constructed request. If the `cloneWithProperty` approach fully propagates into `Request`, the post-construction assignment is redundant. If `Request` ignores the constructor option and only honours the setter, the clone approach is dead code. Either way, only one mechanism should be canonical.",
+      "remediation": "Determine whether `Request` honours `isStream` in its constructor options (via `cloneWithProperty`) or only via the direct setter, then remove the redundant path and add a brief comment explaining which mechanism is authoritative."
+    },
+    {
+      "id": "MNT-009",
+      "title": "Mixed promisify strategies across helpers",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Three different patterns for converting callbacks to promises: manual `new Promise` in create-http-test-server.ts:38-48, `pify` (third-party) in create-https-test-server.ts:29-30, and `promisify` with manual type casts in server-tools.ts:15-16 and with-server.ts:158. This increases cognitive load and dependency surface unnecessarily.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/helpers"
+      ],
+      "evidence": [
+        {
+          "path": "test/helpers/create-http-test-server.ts",
+          "startLine": 38,
+          "endLine": 48
+        },
+        {
+          "path": "test/helpers/create-https-test-server.ts",
+          "startLine": 29,
+          "endLine": 30
+        },
+        {
+          "path": "test/helpers/server-tools.ts",
+          "startLine": 15,
+          "endLine": 16
+        }
+      ],
+      "reasoning": "`pify` is a direct analog to `util.promisify` from Node.js core. Using it in create-https-test-server.ts when every other helper already imports `util.promisify` or uses `new Promise` adds an extra dependency (`pify`) for no benefit. `server-tools.ts` also manually casts to `(callback: (error?: Error) => void) => void` to satisfy promisify's overloads, which is a workaround that would be cleaner as `new Promise`.",
+      "remediation": "Replace `pify` in create-https-test-server.ts with `util.promisify`. Standardize on `util.promisify` or `new Promise` across all helpers and remove the `pify` dependency."
+    },
+    {
+      "id": "DEBT-009",
+      "title": "pem type wrappers model only the callback API, blocking async/await adoption",
+      "category": "technical-debt",
+      "severity": "low",
+      "confidence": {
+        "score": 0.8,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Any test code that wants to use these operations in an async function must reach for `util.promisify` or a wrapper at every call site, adding boilerplate and risking inconsistent error handling.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/types"
+      ],
+      "evidence": [
+        {
+          "path": "test/types/pem.ts",
+          "startLine": 9,
+          "endLine": 13
+        }
+      ],
+      "reasoning": "All three exported types — `CreateCertificate` (line 9), `CreateCsr` (line 11), and `CreatePrivateKey` (line 13) — model the raw `(options, callback) => void` shape from the `pem` package. The `pem` package also exposes promise-returning variants (`pem.createCertificate` returns a Promise when called without a callback since pem@1.14). Typing only the callback form forces consumers to remain in callback style or promisify at every use site rather than once at the boundary.",
+      "remediation": "Add parallel promise-based type aliases: `export type CreateCertificateAsync = (options: CertificateCreationOptions) => Promise<CertificateCreationResult>` etc., or replace the callback forms with promise forms if the test suite already uses async/await throughout."
+    },
+    {
+      "id": "MNT-015",
+      "title": "Unverified error cast to OptionsError in constructor catch block",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.8,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "If any error thrown during Options construction is not an OptionsError (e.g. from a hook dependency), the cast silently leaves `options` undefined and assigns nothing to `this.options`, making the deferred flush path operate on an uninitialised instance.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/index.ts",
+          "startLine": 392,
+          "endLine": 394
+        }
+      ],
+      "reasoning": "Line 392 uses `const {options} = error as OptionsError;` in a catch block. The cast is structurally unchecked—TypeScript cannot verify that the thrown error actually carries an `options` property. While the `if (options)` guard on line 393 handles the undefined case at runtime, the cast suppresses type narrowing that could distinguish OptionsError from other error types, preventing the application of more specific recovery logic for non-OptionsError failures.",
+      "remediation": "Replace the unsafe cast with a safe property access: `const options = (error as Partial<OptionsError>).options;`. This is both type-safe and accurately expresses the intent."
+    },
+    {
+      "id": "DEBT-006",
+      "title": "Node.js version parsed with Number() silently produces NaN on pre-release build strings",
+      "category": "technical-debt",
+      "severity": "low",
+      "confidence": {
+        "score": 0.75,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "On Node.js nightly or RC builds (e.g. `20.0.0-nightly20231001`), `Number('0-nightly20231001')` returns NaN. Any feature-flag comparison using `major` or `minor` silently evaluates to false, potentially enabling or disabling HTTP/2 negotiation or other version-gated behavior incorrectly.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/options.ts",
+          "startLine": 39,
+          "endLine": 39
+        }
+      ],
+      "reasoning": "Line 39 uses `.split('.').map(Number)` to extract the Node.js major and minor version. For pre-release builds, the patch segment contains non-numeric characters (`'0-nightly...'`), causing `Number()` to return NaN for that element. While only `major` and `minor` are destructured, the `as [number, number, number]` cast tells TypeScript to trust the result unconditionally, hiding the NaN risk from static analysis. If upstream ever includes pre-release markers in major or minor (e.g. `20.0-beta.1`), the parsed values would be NaN.",
+      "remediation": "Use `parseInt(segment, 10)` instead of `Number` to stop parsing at the first non-digit character. Add a guard: `if (!Number.isFinite(major) || !Number.isFinite(minor)) throw new Error('Unrecognized Node.js version format: ' + process.versions.node);`."
+    },
+    {
+      "id": "MNT-018",
+      "title": "SVG color values not traceable to documented brand tokens in source file",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.75,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "When brand colors change, engineers have no canonical source of truth for which hex value maps to which brand slot, leading to inconsistent updates across assets.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "media"
+      ],
+      "evidence": [
+        {
+          "path": "media/logo.svg",
+          "startLine": 1,
+          "endLine": 1
+        },
+        {
+          "path": "media/logo.ai",
+          "startLine": 99,
+          "endLine": 421
+        }
+      ],
+      "reasoning": "media/logo.svg:1 uses exactly two colors: `#43dea4` and `#8085bb`. The swatch palette embedded in media/logo.ai:99–421 lists ~40 named RGB swatches (White, Black, RGB Red, R=193 G=39 B=45, etc.) but neither `#43dea4` nor `#8085bb` appears among them, indicating the exported SVG's colors diverged from the source palette — either by a manual edit post-export or a colorspace conversion. There is no CSS custom property or design token file mapping these values to semantic names.",
+      "remediation": "Reconcile the two colors against the intended brand palette in the `.ai` file, then document them as CSS custom properties (e.g. `--color-logo-arrow: #43dea4; --color-logo-text: #8085bb;`) in a tokens file. Reference those tokens in the SVG via `fill=\"var(--color-logo-arrow)\"` for inline-SVG contexts, or document the hex values with their brand names in a COLORS.md."
+    },
+    {
+      "id": "MNT-027",
+      "title": "slow-stream stub re-exports PassThrough without constructor override, silently accepting wrong arguments",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.72,
+        "level": "medium"
+      },
+      "impact": {
+        "rationale": "The `slow-stream` package adds a `bps` (bytes-per-second) or delay option to its constructor. Typing it as a bare `PassThrough` re-export hides that parameter from callers, making the stub actively misleading rather than merely incomplete.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test/types"
+      ],
+      "evidence": [
+        {
+          "path": "test/types/slow-stream/index.d.ts",
+          "startLine": 1,
+          "endLine": 5
+        }
+      ],
+      "reasoning": "Line 4 (`export = PassThrough`) asserts structural identity with Node's built-in PassThrough. slow-stream's constructor accepts a throttle option object not present in the PassThrough signature. Because the stub is a bare re-export, TypeScript will accept `new SlowStream(1000)` (passing the throttle value) but also refuse or silently mistype it, depending on TypeScript version and overload resolution — the behaviour is undefined and fragile.",
+      "remediation": "Replace the bare re-export with a minimal typed class: `class SlowStream extends PassThrough { constructor(options?: PassThroughOptions & { bps?: number }); }` then `export = SlowStream`. This documents the extended constructor and preserves stream compatibility."
+    },
+    {
+      "id": "CPLX-004",
+      "title": "Replace fragile manual stack-trace string surgery in `RequestError`",
+      "category": "complexity",
+      "severity": "low",
+      "confidence": {
+        "score": 0.65,
+        "level": "medium"
+      },
+      "impact": {
+        "rationale": "Every error in the library flows through this constructor; brittle string manipulation on `.stack` is a maintenance hazard that can corrupt diagnostics across all error types if the formatting assumptions break across Node versions.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "source/core"
+      ],
+      "evidence": [
+        {
+          "path": "source/core/errors.ts",
+          "startLine": 58,
+          "endLine": 70
+        }
+      ],
+      "reasoning": "The constructor merges the wrapped error's stack into its own by `indexOf`-ing each message inside its stack, slicing, reversing, de-duplicating shared frames, and re-joining (58-70). This depends on stack strings containing the message verbatim and on a stable frame format — assumptions that vary by Node version and by errors with multi-line or empty messages. As the single chokepoint for `MaxRedirectsError`, `HTTPError`, `TimeoutError`, etc., a subtle off-by-one here degrades debuggability everywhere.",
+      "remediation": "Prefer the native error `cause` chain (already passed via `super(message, {cause: error})`) for diagnostics and drop the manual merge, or isolate the merge into a small, separately unit-tested `mergeStacks(outer, inner)` function with cases for empty/multiline messages and missing stacks."
+    }
+  ],
+  "patches": [
+    {
+      "findingId": "MNT-021",
+      "filename": "MNT-021.patch",
+      "diff": "Index: documentation/2-options.md\n===================================================================\n--- documentation/2-options.md\tbefore\n+++ documentation/2-options.md\tafter\n@@ -75,18 +75,18 @@\n In order to keep the parent value, you must not set an option to `undefined`.\\\n Doing so will reset those values:\n \n ```js\n-instance(…, {searchParams: undefined});\n-instance(…, {cookieJar: undefined});\n-instance(…, {responseType: undefined});\n-instance(…, {prefixUrl: ''});\n-instance(…, {agent: {http: undefined, https: undefined, http2: undefined}});\n-instance(…, {context: {token: undefined, …}});\n-instance(…, {https: {rejectUnauthorized: undefined, …}});\n-instance(…, {cacheOptions: {immutableMinTimeToLive: undefined, …}});\n-instance(…, {headers: {'user-agent': undefined, …}});\n-instance(…, {timeout: {request: undefined, …}});\n+instance('https://example.com', {searchParams: undefined});\n+instance('https://example.com', {cookieJar: undefined});\n+instance('https://example.com', {responseType: undefined});\n+instance('https://example.com', {prefixUrl: ''});\n+instance('https://example.com', {agent: {http: undefined, https: undefined, http2: undefined}});\n+instance('https://example.com', {context: {token: undefined, /* ... */}});\n+instance('https://example.com', {https: {rejectUnauthorized: undefined, /* ... */}});\n+instance('https://example.com', {cacheOptions: {immutableMinTimeToLive: undefined, /* ... */}});\n+instance('https://example.com', {headers: {'user-agent': undefined, /* ... */}});\n+instance('https://example.com', {timeout: {request: undefined, /* ... */}});\n ```\n \n In order to reset `hooks`, `retry` and `pagination`, another Got instance must be created:\n \n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "MNT-016",
+      "filename": "MNT-016.patch",
+      "diff": "Index: media/logo.svg\n===================================================================\n--- media/logo.svg\tbefore\n+++ media/logo.svg\tafter\n@@ -1,1 +1,1 @@\n-<svg height=\"172\" width=\"416\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M252.8 92.7L221 123.8V4.3c0-2.8-1.3-4.1-3-4.1s-3.6 1.3-3.6 4.1l.4 119.5-31-31.1c-3.7-3.7-8.1.9-4.5 4.6l39.3 39.3c28-28 11.6-11.4 39.5-39.3 3.7-3.7-1.7-8.3-5.3-4.6z\" fill=\"#43dea4\"/><path d=\"M68.4 171.4C31.5 171-.4 140.4.7 99.6c1.1-33 23.7-63.8 57.1-69.2 21.3-3.2 47 3 61.7 19.2 3.5 4.1-1.7 8.6-5.2 5-13.1-14.7-36.2-20-55.4-17-30 4.7-50.2 32.8-51.3 62.3-.9 36 27.8 63.8 61 64.5 18.8.2 38.6-8 49.4-23.7v-36H72.1c-4.1 0-4.1-6.5 0-6.5h48.5c3 0 3.9 1.7 3.9 4.1v38.4c0 1.7-.2 3.7-1.5 5-12.7 16.6-33.9 25.9-54.6 25.7zm218-73.1c1.3 41.6-31.1 73.5-68.5 73.5-37.2 0-69.6-31.9-68.5-73.5 1-31.7 20.4-60 51.2-67.4.7 2.1 1.1 4.4 1.6 6.7-28.5 6-44.7 31.7-45.5 60.9-1.1 37.1 27.8 66.6 61.2 66.6 33.6 0 62.5-29.5 61.4-66.6-.8-27.9-18.7-52.8-45.7-60.1.3-2.5.9-4.5 1.5-6.8 29.9 8.3 50.5 35.8 51.3 66.7zm125-66.4c5.2 0 5.2 6.5 0 6.5h-55.8l.2 127.6c0 2.8-2.2 4.1-3.9 4.1s-3.7-1.3-3.7-4.1V38.4h-55.6c-5.2 0-5.2-6.5 0-6.5z\" fill=\"#8085bb\"/></svg>\n\\ No newline at end of file\n+<svg viewBox=\"0 0 416 172\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M252.8 92.7L221 123.8V4.3c0-2.8-1.3-4.1-3-4.1s-3.6 1.3-3.6 4.1l.4 119.5-31-31.1c-3.7-3.7-8.1.9-4.5 4.6l39.3 39.3c28-28 11.6-11.4 39.5-39.3 3.7-3.7-1.7-8.3-5.3-4.6z\" fill=\"#43dea4\"/><path d=\"M68.4 171.4C31.5 171-.4 140.4.7 99.6c1.1-33 23.7-63.8 57.1-69.2 21.3-3.2 47 3 61.7 19.2 3.5 4.1-1.7 8.6-5.2 5-13.1-14.7-36.2-20-55.4-17-30 4.7-50.2 32.8-51.3 62.3-.9 36 27.8 63.8 61 64.5 18.8.2 38.6-8 49.4-23.7v-36H72.1c-4.1 0-4.1-6.5 0-6.5h48.5c3 0 3.9 1.7 3.9 4.1v38.4c0 1.7-.2 3.7-1.5 5-12.7 16.6-33.9 25.9-54.6 25.7zm218-73.1c1.3 41.6-31.1 73.5-68.5 73.5-37.2 0-69.6-31.9-68.5-73.5 1-31.7 20.4-60 51.2-67.4.7 2.1 1.1 4.4 1.6 6.7-28.5 6-44.7 31.7-45.5 60.9-1.1 37.1 27.8 66.6 61.2 66.6 33.6 0 62.5-29.5 61.4-66.6-.8-27.9-18.7-52.8-45.7-60.1.3-2.5.9-4.5 1.5-6.8 29.9 8.3 50.5 35.8 51.3 66.7zm125-66.4c5.2 0 5.2 6.5 0 6.5h-55.8l.2 127.6c0 2.8-2.2 4.1-3.9 4.1s-3.7-1.3-3.7-4.1V38.4h-55.6c-5.2 0-5.2-6.5 0-6.5z\" fill=\"#8085bb\"/></svg>\n\\ No newline at end of file\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "TEST-001",
+      "filename": "TEST-001.patch",
+      "diff": "Index: test/helpers/with-server.ts\n===================================================================\n--- test/helpers/with-server.ts\tbefore\n+++ test/helpers/with-server.ts\tafter\n@@ -69,14 +69,13 @@\n \t\ttry {\n \t\t\tawait run(t, server, preparedGot, clock);\n \t\t} finally {\n \t\t\tawait server.close();\n+\t\t\tif (install) {\n+\t\t\t\t// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion\n+\t\t\t\t(clock as InstalledClock).uninstall();\n+\t\t\t}\n \t\t}\n-\n-\t\tif (install) {\n-\t\t\t// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion\n-\t\t\t(clock as InstalledClock).uninstall();\n-\t\t}\n \t},\n });\n \n export const withBodyParsingServer = generateHook({install: false, options: {}});\n@@ -130,14 +129,13 @@\n \t\ttry {\n \t\t\tawait run(t, server, preparedGot, fakeTimer);\n \t\t} finally {\n \t\t\tawait server.close();\n+\t\t\tif (installFakeTimer) {\n+\t\t\t\t// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion\n+\t\t\t\t(fakeTimer as InstalledClock).uninstall();\n+\t\t\t}\n \t\t}\n-\n-\t\tif (installFakeTimer) {\n-\t\t\t// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion\n-\t\t\t(fakeTimer as InstalledClock).uninstall();\n-\t\t}\n \t},\n });\n \n export const withHttpsServer = generateHttpsHook;\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "syntax valid; no verify command configured to confirm behaviour"
+      }
+    },
+    {
+      "findingId": "SEC-001",
+      "filename": "SEC-001.patch",
+      "diff": "Index: documentation/3-streams.md\n===================================================================\n--- documentation/3-streams.md\tbefore\n+++ documentation/3-streams.md\tafter\n@@ -241,19 +241,43 @@\n ```\n \n **Example: Filter headers when proxying to ServerResponse**\n \n+> **WARNING — SSRF risk:** Never pass a user-supplied URL directly to `got.stream` (or any HTTP client) in a server-side context. Doing so allows attackers to probe internal networks, cloud metadata endpoints (e.g. `http://169.254.169.254/`), and localhost services. **You MUST validate the URL before making the request.** The example below shows the required validation: reject non-`https:` protocols and restrict the hostname to an explicit allowlist. Adapt the allowlist to your own requirements before deploying.\n+\n ```js\n import {pipeline as streamPipeline} from 'node:stream/promises';\n import got from 'got';\n import express from 'express';\n \n const app = express();\n \n+// Allowlist of hostnames this proxy is permitted to reach.\n+const ALLOWED_HOSTS = new Set(['api.example.com', 'cdn.example.com']);\n+\n // Allowlist specific headers when proxying\n app.get('/proxy', async (request, response) => {\n+\t// Validate the caller-supplied URL before making any network request.\n+\tlet target;\n+\ttry {\n+\t\ttarget = new URL(request.query.url);\n+\t} catch {\n+\t\tresponse.status(400).send('Invalid URL');\n+\t\treturn;\n+\t}\n+\n+\tif (target.protocol !== 'https:') {\n+\t\tresponse.status(400).send('Only https URLs are allowed');\n+\t\treturn;\n+\t}\n+\n+\tif (!ALLOWED_HOSTS.has(target.hostname)) {\n+\t\tresponse.status(403).send('Host not allowed');\n+\t\treturn;\n+\t}\n+\n \tawait streamPipeline(\n-\t\tgot.stream(request.query.url).on('response', upstreamResponse => {\n+\t\tgot.stream(target).on('response', upstreamResponse => {\n \t\t\t// Only allow specific headers\n \t\t\tfor (const header of Object.keys(upstreamResponse.headers)) {\n \t\t\t\tif (!['content-type', 'content-length'].includes(header.toLowerCase())) {\n \t\t\t\t\tdelete upstreamResponse.headers[header];\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "MNT-005",
+      "filename": "MNT-005.patch",
+      "diff": "Index: source/create.ts\n===================================================================\n--- source/create.ts\tbefore\n+++ source/create.ts\tafter\n@@ -22,9 +22,9 @@\n \ttype OptionsInit,\n } from './core/options.js';\n import type {RequestPromise} from './as-promise/types.js';\n \n-const isGotInstance = (value: Got | ExtendOptions): value is Got => is.function(value);\n+const isGotInstance = (value: Got | ExtendOptions): value is Got => is.function(value) && 'defaults' in value;\n \n const aliases: readonly HTTPAlias[] = [\n \t'get',\n \t'post',\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "syntax valid; no verify command configured to confirm behaviour"
+      }
+    },
+    {
+      "findingId": "MNT-022",
+      "filename": "MNT-022.patch",
+      "diff": "Index: documentation/tips.md\n===================================================================\n--- documentation/tips.md\tbefore\n+++ documentation/tips.md\tafter\n@@ -127,15 +127,19 @@\n \n const stream = got.stream('https://httpbin.org/json');\n \n stream.on('response', () => {\n-\tconsole.log(`Downloaded: ${stream.socket.bytesRead} bytes`);\n-\tconsole.log(`Uploaded: ${stream.socket.bytesWritten} bytes`);\n+\tif (stream.socket) {\n+\t\tconsole.log(`Downloaded: ${stream.socket.bytesRead} bytes`);\n+\t\tconsole.log(`Uploaded: ${stream.socket.bytesWritten} bytes`);\n+\t}\n });\n \n stream.on('end', () => {\n-\tconst totalTraffic = stream.socket.bytesRead + stream.socket.bytesWritten;\n-\tconsole.log(`Total traffic: ${totalTraffic} bytes`);\n+\tif (stream.socket) {\n+\t\tconst totalTraffic = stream.socket.bytesRead + stream.socket.bytesWritten;\n+\t\tconsole.log(`Total traffic: ${totalTraffic} bytes`);\n+\t}\n });\n \n stream.resume();\n ```\n@@ -147,10 +151,12 @@\n \n const request = got('https://httpbin.org/json');\n \n request.on('response', response => {\n-\tconsole.log(`Downloaded: ${response.request.socket.bytesRead} bytes`);\n-\tconsole.log(`Uploaded: ${response.request.socket.bytesWritten} bytes`);\n+\tif (response.request.socket) {\n+\t\tconsole.log(`Downloaded: ${response.request.socket.bytesRead} bytes`);\n+\t\tconsole.log(`Uploaded: ${response.request.socket.bytesWritten} bytes`);\n+\t}\n });\n \n const response = await request;\n \n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    }
+  ]
+}

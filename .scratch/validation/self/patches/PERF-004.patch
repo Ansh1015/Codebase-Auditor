@@ -1,0 +1,20 @@
+Index: src/mapping/build.ts
+===================================================================
+--- src/mapping/build.ts	before
++++ src/mapping/build.ts	after
+@@ -76,11 +76,12 @@
+     const d = drafts.get(edge.to);
+     if (d) d.inDegree += 1;
+   }
+ 
+-  const maxIn = Math.max(1, ...[...drafts.values()].map((d) => d.inDegree));
+-  const maxChurn = Math.max(1, ...[...drafts.values()].map((d) => d.node.churn));
+-  const maxLoc = Math.max(1, ...[...drafts.values()].map((d) => d.node.loc));
++  const vals = [...drafts.values()];
++  const maxIn = vals.reduce((m, d) => Math.max(m, d.inDegree), 1);
++  const maxChurn = vals.reduce((m, d) => Math.max(m, d.node.churn), 1);
++  const maxLoc = vals.reduce((m, d) => Math.max(m, d.node.loc), 1);
+ 
+   const files: FileNode[] = [];
+   for (const draft of drafts.values()) {
+     const importance =

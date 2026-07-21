@@ -1,0 +1,29 @@
+Index: .github/dependabot.yml
+===================================================================
+--- .github/dependabot.yml	before
++++ .github/dependabot.yml	after
+@@ -1,12 +1,12 @@
+-version: 2
+-updates:
+-- package-ecosystem: gomod
+-  directory: /
+-  schedule:
+-    interval: weekly
+-  open-pull-requests-limit: 99
+-- package-ecosystem: github-actions
+-  directory: /
+-  schedule:
+-    interval: weekly
+-  open-pull-requests-limit: 99
++version: 2
++updates:
++- package-ecosystem: npm
++  directory: /
++  schedule:
++    interval: weekly
++  open-pull-requests-limit: 99
++- package-ecosystem: github-actions
++  directory: /
++  schedule:
++    interval: weekly
++  open-pull-requests-limit: 99

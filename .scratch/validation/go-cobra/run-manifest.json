@@ -1,0 +1,41 @@
+{
+  "target": "cobra",
+  "generatedAt": "2026-06-29T10:49:12.093Z",
+  "commit": "ad460ea8f249db69c943a365fb84f3a59042d54e",
+  "provider": "Claude Code subscription (claude CLI, OAuth — Pro/Max) (cached)",
+  "repo": {
+    "fileCount": 65,
+    "totalLoc": 19967,
+    "edgeCount": 0,
+    "componentCount": 5,
+    "languageBreakdown": {
+      "unknown": 29,
+      "go": 36
+    },
+    "preciseFiles": 0
+  },
+  "ingest": {
+    "considered": 66,
+    "ingested": 65,
+    "skippedBinary": 1,
+    "skippedTooLarge": 0,
+    "skippedIgnored": 0
+  },
+  "passes": {
+    "deepDives": 5,
+    "crossCut": true,
+    "rawFindings": 32,
+    "groundedFindings": 32,
+    "droppedUngrounded": 0
+  },
+  "budget": {
+    "calls": 13,
+    "inputTokens": 522,
+    "outputTokens": 52907,
+    "totalTokens": 53429,
+    "costUsd": 2.055201,
+    "substitutions": 1
+  },
+  "findingCount": 32,
+  "patchCount": 6
+}

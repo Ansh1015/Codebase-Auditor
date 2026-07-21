@@ -1,0 +1,33 @@
+Index: documentation/2-options.md
+===================================================================
+--- documentation/2-options.md	before
++++ documentation/2-options.md	after
+@@ -75,18 +75,18 @@
+ In order to keep the parent value, you must not set an option to `undefined`.\
+ Doing so will reset those values:
+ 
+ ```js
+-instance(…, {searchParams: undefined});
+-instance(…, {cookieJar: undefined});
+-instance(…, {responseType: undefined});
+-instance(…, {prefixUrl: ''});
+-instance(…, {agent: {http: undefined, https: undefined, http2: undefined}});
+-instance(…, {context: {token: undefined, …}});
+-instance(…, {https: {rejectUnauthorized: undefined, …}});
+-instance(…, {cacheOptions: {immutableMinTimeToLive: undefined, …}});
+-instance(…, {headers: {'user-agent': undefined, …}});
+-instance(…, {timeout: {request: undefined, …}});
++instance('https://example.com', {searchParams: undefined});
++instance('https://example.com', {cookieJar: undefined});
++instance('https://example.com', {responseType: undefined});
++instance('https://example.com', {prefixUrl: ''});
++instance('https://example.com', {agent: {http: undefined, https: undefined, http2: undefined}});
++instance('https://example.com', {context: {token: undefined, /* ... */}});
++instance('https://example.com', {https: {rejectUnauthorized: undefined, /* ... */}});
++instance('https://example.com', {cacheOptions: {immutableMinTimeToLive: undefined, /* ... */}});
++instance('https://example.com', {headers: {'user-agent': undefined, /* ... */}});
++instance('https://example.com', {timeout: {request: undefined, /* ... */}});
+ ```
+ 
+ In order to reset `hooks`, `retry` and `pagination`, another Got instance must be created:
+ 

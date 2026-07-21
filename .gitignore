@@ -32,9 +32,9 @@ audit-output*/
 .agents/
 
 # AI-collaboration docs (private; not for the public repo)
-CLAUDE.md
-docs/agents/
+# CLAUDE.md
+# docs/agents/
 
-# Internal planning / how-it's-made (private; not for the public repo)
-ROADMAP.md
-.scratch/
+# # Internal planning / how-it's-made (private; not for the public repo)
+# ROADMAP.md
+# .scratch/

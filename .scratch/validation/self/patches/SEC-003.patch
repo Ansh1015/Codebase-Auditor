@@ -1,0 +1,70 @@
+Index: src/patch/run.ts
+===================================================================
+--- src/patch/run.ts	before
++++ src/patch/run.ts	after
+@@ -50,8 +50,42 @@
+ function contentMap(files: readonly IngestedFile[]): Map<string, string> {
+   return new Map(files.map((f) => [f.path as string, f.content]));
+ }
+ 
++/**
++ * Splits a shell command string into an argv array respecting single/double
++ * quotes and backslash escapes. Returns null if the command is empty.
++ */
++function parseArgv(cmd: string): [string, ...string[]] | null {
++  const args: string[] = [];
++  let current = "";
++  let inSingle = false;
++  let inDouble = false;
++
++  for (let i = 0; i < cmd.length; i++) {
++    const ch = cmd[i]!;
++    if (ch === "'" && !inDouble) {
++      inSingle = !inSingle;
++    } else if (ch === '"' && !inSingle) {
++      inDouble = !inDouble;
++    } else if (ch === "\\" && !inSingle && i + 1 < cmd.length) {
++      current += cmd[++i]!;
++    } else if (/\s/.test(ch) && !inSingle && !inDouble) {
++      if (current) {
++        args.push(current);
++        current = "";
++      }
++    } else {
++      current += ch;
++    }
++  }
++  if (current) args.push(current);
++
++  const first = args[0];
++  if (!first) return null;
++  return [first, ...args.slice(1)];
++}
++
+ async function generateNewContent(
+   provider: LlmProvider,
+   candidate: PatchCandidate,
+   content: string,
+@@ -86,14 +120,19 @@
+   const tmp = await mkdtemp(path.join(tmpdir(), "auditor-verify-"));
+   try {
+     await cp(repoRoot, tmp, {
+       recursive: true,
+-      filter: (src) => !/[\\/](\.git|node_modules|\.venv|dist|build)([\\/]|$)/.test(src),
++      filter: (src) => !/([\\/](\.git|node_modules|\.venv|dist|build)([\\/]|$))/.test(src),
+     });
+     await writeFile(path.join(tmp, relPath), newContent, "utf8");
+-    const { exitCode, stdout, stderr } = await execa(command, {
++    const argv = parseArgv(command);
++    if (!argv) {
++      return { ran: true, passed: false, detail: "verify command is empty" };
++    }
++    const [exe, ...rest] = argv;
++    const { exitCode, stdout, stderr } = await execa(exe, rest, {
+       cwd: tmp,
+-      shell: true,
++      shell: false,
+       reject: false,
+       timeout: 180_000,
+     });
+     return {

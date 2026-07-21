@@ -1,0 +1,38 @@
+Index: src/cli/target.ts
+===================================================================
+--- src/cli/target.ts	before
++++ src/cli/target.ts	after
+@@ -32,25 +32,30 @@
+   return URL_RE.test(target) || target.endsWith(".git");
+ }
+ 
+ async function headCommit(dir: string): Promise<string | undefined> {
+-  const res = await execa("git", ["-C", dir, "rev-parse", "HEAD"], { reject: false });
++  const res = await execa("git", ["-C", dir, "rev-parse", "HEAD"], { reject: false, timeout: 5_000 });
++  if (res.timedOut) throw new TargetError("git rev-parse timed out");
+   return res.exitCode === 0 ? res.stdout.trim() : undefined;
+ }
+ 
+ function repoNameFromUrl(url: string): string {
+   const last = url
+     .replace(/\.git$/, "")
+-    .split(/[/:]/)
++    .split(/[/:]/ )
+     .pop();
+   return last && last.length > 0 ? last : "repo";
+ }
+ 
+ export async function resolveTarget(target: string): Promise<ResolvedTarget> {
+   if (looksLikeGitUrl(target)) {
+     const base = await mkdtemp(path.join(tmpdir(), "auditor-"));
+     const dir = path.join(base, repoNameFromUrl(target));
+-    const clone = await execa("git", ["clone", "--depth", "1", target, dir], { reject: false });
++    const clone = await execa("git", ["clone", "--depth", "1", target, dir], { reject: false, timeout: 60_000 });
++    if (clone.timedOut) {
++      await rm(base, { recursive: true, force: true });
++      throw new TargetError("git clone timed out after 60 s");
++    }
+     if (clone.exitCode !== 0) {
+       await rm(base, { recursive: true, force: true });
+       throw new TargetError(`git clone failed: ${clone.stderr.slice(0, 300)}`);
+     }

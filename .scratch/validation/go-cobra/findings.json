@@ -1,0 +1,1087 @@
+{
+  "target": "cobra",
+  "generatedAt": "2026-06-29T10:49:12.093Z",
+  "commit": "ad460ea8f249db69c943a365fb84f3a59042d54e",
+  "healthScore": 0,
+  "counts": {
+    "critical": 1,
+    "high": 7,
+    "medium": 13,
+    "low": 11,
+    "info": 0
+  },
+  "findings": [
+    {
+      "id": "ARCH-001",
+      "title": "Fatal error suppressed: yaml.Marshal failure calls os.Exit inside library code",
+      "category": "architecture",
+      "severity": "critical",
+      "confidence": {
+        "score": 0.98,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Library functions must never call os.Exit — it prevents callers from recovering, makes the function untestable in isolation, and violates the contract that errors are returned, not swallowed. Any program embedding this as a library loses control of its own lifecycle.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "doc/yaml"
+      ],
+      "evidence": [
+        {
+          "path": "doc/yaml_docs.go",
+          "startLine": 137,
+          "endLine": 141
+        }
+      ],
+      "reasoning": "Lines 137–141 of yaml_docs.go: `final, err := yaml.Marshal(&yamlDoc); if err != nil { fmt.Println(err); os.Exit(1) }`. This is inside `GenYamlCustom`, a public library function. Calling `os.Exit` in a library is a hard anti-pattern: it cannot be unit-tested without subprocess tricks, it bypasses all deferred cleanup in the call stack, and it prevents the caller from handling the error gracefully.",
+      "remediation": "Return the error instead: `if err != nil { return err }`. Remove the `fmt` and `os` usages for this case if they become unused."
+    },
+    {
+      "id": "TEST-002",
+      "title": "Package-level EnablePrefixMatching mutation makes tests non-parallelizable and panic-unsafe",
+      "category": "testing",
+      "severity": "high",
+      "confidence": {
+        "score": 1,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Mutating a package-level variable and relying on a post-assertion reset is a latent data race: adding t.Parallel() to any sibling test or running with -race will expose it. A panic or t.Fatal before the reset permanently corrupts the global for the remainder of the binary's test run.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "testing"
+      ],
+      "evidence": [
+        {
+          "path": "command_test.go",
+          "startLine": 305,
+          "endLine": 332
+        },
+        {
+          "path": "command_test.go",
+          "startLine": 334,
+          "endLine": 367
+        }
+      ],
+      "reasoning": "TestEnablePrefixMatching sets EnablePrefixMatching = true at line 306 and restores it at line 331. TestAliasPrefixMatching does the same at lines 335 and 366. Neither test uses t.Cleanup or defer to guarantee restoration. If t.Fatalf fires inside either test, the reset is skipped and every subsequent test in the binary run operates on the wrong global value. This also prevents the entire test suite from safely using -parallel.",
+      "remediation": "Replace the manual reset with a deferred t.Cleanup call immediately after mutation: t.Cleanup(func() { EnablePrefixMatching = defaultPrefixMatching }). This guarantees restoration on panic, t.Fatal, and normal exit. Long-term, remove the package-level global and thread the option through command state."
+    },
+    {
+      "id": "DEBT-002",
+      "title": "test-win cache key references undefined matrix.go variable",
+      "category": "technical-debt",
+      "severity": "high",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The test-win job has no matrix strategy, so ${{ matrix.go }} evaluates to an empty string. The cache key becomes 'Windows--<hash>' and restore-key becomes 'Windows-', meaning every run either hits an unintended broad cache or misses entirely. Cache corruption across Go versions is also possible if a matrix is added later.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test-win"
+      ],
+      "evidence": [
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 114,
+          "endLine": 118
+        }
+      ],
+      "reasoning": "Lines 117-118 use ${{ matrix.go }} but the test-win job (lines 91-125) defines no matrix block. The variable is undefined at evaluation time, producing a broken cache key. The analogous test-unix job (lines 56-88) correctly references the same variable because it owns a matrix.go dimension. This is a latent bug: cache hits are unpredictable and the keying strategy provides no Go-version isolation on Windows.",
+      "remediation": "Either (a) add a matrix.go dimension to test-win matching the unix matrix so Windows coverage is equivalent, or (b) replace ${{ matrix.go }} in the cache key with a hardcoded Go version string matching what MSYS2 installs (e.g., the major.minor from mingw-w64-x86_64-go).",
+      "patchRef": "DEBT-002.patch"
+    },
+    {
+      "id": "DEBT-004",
+      "title": "Dependabot configures Go modules instead of npm for a TypeScript project",
+      "category": "technical-debt",
+      "severity": "high",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The repository is a Node 20/TypeScript project (per CLAUDE.md) with no Go source. The `gomod` entry will never match any file, so no dependency updates are ever opened. Meanwhile there is no `npm` entry, meaning actual runtime and dev dependencies (vitest, biome, tree-sitter, etc.) receive zero automated security or version updates.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        ".github"
+      ],
+      "evidence": [
+        {
+          "path": ".github/dependabot.yml",
+          "startLine": 3,
+          "endLine": 7
+        }
+      ],
+      "reasoning": "Line 3 sets `package-ecosystem: gomod`, which requires a `go.mod` file in the root. No such file exists in this TypeScript codebase. The correct ecosystem is `npm`. Because the only dependency ecosystem entry is wrong, the entire point of Dependabot — automated dependency hygiene — is silently broken.",
+      "remediation": "Replace the `gomod` block with `package-ecosystem: npm`. Keep the `github-actions` block as-is. Example:\n\n```yaml\n- package-ecosystem: npm\n  directory: /\n  schedule:\n    interval: weekly\n  open-pull-requests-limit: 10\n```",
+      "patchRef": "DEBT-004.patch"
+    },
+    {
+      "id": "MNT-006",
+      "title": "Non-deterministic auto-gen timestamp causes non-reproducible builds",
+      "category": "maintainability",
+      "severity": "high",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Calling time.Now() in the output of a doc generator means every run produces different output even with identical inputs. This breaks reproducible builds, content-addressed caching, and meaningful diffs in version control.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "doc/rest",
+        "doc/md"
+      ],
+      "evidence": [
+        {
+          "path": "doc/rest_docs.go",
+          "startLine": 126,
+          "endLine": 126
+        },
+        {
+          "path": "doc/md_docs.go",
+          "startLine": 113,
+          "endLine": 113
+        }
+      ],
+      "reasoning": "rest_docs.go:126 and md_docs.go:113 both embed `time.Now().Format(...)` directly in the generated output. Unlike man_docs.go which respects `SOURCE_DATE_EPOCH` via `fillHeader`, the ReST and Markdown generators have no such mechanism. The man page generator correctly implements the reproducible-build convention (doc/man_docs.go:127–133) but the other two formats do not.",
+      "remediation": "Add an optional date parameter (or honour `SOURCE_DATE_EPOCH`) in `GenReSTCustom` and `GenMarkdownCustom`, mirroring the `fillHeader` logic in man_docs.go:125–135."
+    },
+    {
+      "id": "DEBT-005",
+      "title": "Labeler globs reference Go/Cobra source files that do not exist in this repo",
+      "category": "technical-debt",
+      "severity": "high",
+      "confidence": {
+        "score": 0.96,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "All path-based labels in labeler.yml will silently never fire because the matched files (`cobra.go`, `cobra_test.go`, `*command*.go`, `args*.go`, `doc/**`, `*completions*`) are artifacts of the Cobra Go CLI framework, not this TypeScript project. PRs modifying real source paths (e.g. `src/passes/`, `src/llm/`) will be unlabelled, defeating automated triage.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        ".github"
+      ],
+      "evidence": [
+        {
+          "path": ".github/labeler.yml",
+          "startLine": 4,
+          "endLine": 4
+        },
+        {
+          "path": ".github/labeler.yml",
+          "startLine": 9,
+          "endLine": 9
+        },
+        {
+          "path": ".github/labeler.yml",
+          "startLine": 14,
+          "endLine": 14
+        },
+        {
+          "path": ".github/labeler.yml",
+          "startLine": 24,
+          "endLine": 24
+        }
+      ],
+      "reasoning": "Line 4 (`doc/**`), line 9 (`cobra.go`, `cobra_test.go`, `*command*.go`), line 14 (`args*.go`), and line 24 (`*completions*`) are verbatim from the spf13/cobra repository's labeler. None of these paths correspond to anything in this TypeScript codebase. The configuration appears to have been copy-pasted without adaptation, leaving the labeler entirely inert.",
+      "remediation": "Rewrite labeler.yml to match the actual project structure. Map labels to real source paths, for example:\n\n```yaml\n\"area/ingest\":\n- changed-files:\n  - any-glob-to-any-file: 'src/ingest/**'\n\"area/llm\":\n- changed-files:\n  - any-glob-to-any-file: 'src/llm/**'\n\"area/passes\":\n- changed-files:\n  - any-glob-to-any-file: 'src/passes/**'\n\"area/testing\":\n- changed-files:\n  - any-glob-to-any-file: ['test/**', '**/*.test.ts']\n```"
+    },
+    {
+      "id": "DEBT-001",
+      "title": "completionCmd.Long uses unresolvable `cmd` variable at package-level initialization",
+      "category": "technical-debt",
+      "severity": "high",
+      "confidence": {
+        "score": 0.92,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The code snippet at completions/_index.md:34-72 shows `var completionCmd = &cobra.Command{ Long: fmt.Sprintf(`...`, cmd.Root().Name()) }` at package scope. At package-level initialization, `cmd` is not defined in the shown scope, so this code will not compile as written. Users copy-pasting this canonical example will encounter a build failure with no clear error message pointing to the documentation.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "site/content/completions"
+      ],
+      "evidence": [
+        {
+          "path": "site/content/completions/_index.md",
+          "startLine": 31,
+          "endLine": 88
+        }
+      ],
+      "reasoning": "The `Long` field is initialized at package-level struct literal evaluation. `cmd` is undefined at that scope. The intended behavior — embedding the root command's name — requires either delaying the assignment to an `init()` function where the root command is already constructed, using `os.Args[0]`, or building the string inside a `PersistentPreRun` hook. As written the snippet fails to compile, which is the worst outcome for reference documentation.",
+      "remediation": "Replace `cmd.Root().Name()` with `os.Args[0]` in the `fmt.Sprintf` call, or move the `Long` assignment into the `init()` function after the root command is initialized. Add a note explaining why the runtime value differs from compile-time initialization.",
+      "patchRef": "DEBT-001.patch"
+    },
+    {
+      "id": "MNT-007",
+      "title": "DisableAutoGenTag mutation via VisitParents causes cross-call state corruption",
+      "category": "maintainability",
+      "severity": "high",
+      "confidence": {
+        "score": 0.92,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Mutating `cmd.DisableAutoGenTag` as a side effect of generation permanently alters the cobra.Command struct, making the generator non-idempotent and leaving the command tree in a different state for subsequent calls. This is particularly hazardous when commands are shared across tests or concurrent goroutines.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "doc/man",
+        "doc/rest",
+        "doc/md"
+      ],
+      "evidence": [
+        {
+          "path": "doc/man_docs.go",
+          "startLine": 225,
+          "endLine": 229
+        },
+        {
+          "path": "doc/rest_docs.go",
+          "startLine": 105,
+          "endLine": 109
+        },
+        {
+          "path": "doc/md_docs.go",
+          "startLine": 91,
+          "endLine": 95
+        }
+      ],
+      "reasoning": "All three generators contain identical code that calls `cmd.VisitParents` and sets `cmd.DisableAutoGenTag = c.DisableAutoGenTag` (e.g. man_docs.go:225–229). This mutates the command struct as a side effect of a read-only generation pass. The intent is to inherit the flag from ancestors, but the mechanism permanently modifies the child command. In tests, `echoCmd` shares state across all test functions in the package, so this mutation could contaminate unrelated tests.",
+      "remediation": "Compute the effective `disableAutoGenTag` value into a local boolean without mutating `cmd`: `disableTag := cmd.DisableAutoGenTag; cmd.VisitParents(func(c *cobra.Command) { if c.DisableAutoGenTag { disableTag = true } })`. Use `disableTag` in the conditional checks."
+    },
+    {
+      "id": "MNT-002",
+      "title": "Hugo-specific strings embedded in generic Cobra library documentation",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.96,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Three places show Hugo branding inside documentation presented as generic Cobra usage: `Use: \"hugo\"` / 'Hugo is a very fast static site generator' (lines 48–50), `Short: \"Print the version number of Hugo\"` (line 179), and `fmt.Println(\"Hugo Static Site Generator v0.9 -- HEAD\")` (line 183). This confuses new users about whether these are Hugo-specific APIs or standard Cobra patterns, and the hardcoded version string 'v0.9' is stale.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "site/content"
+      ],
+      "evidence": [
+        {
+          "path": "site/content/user_guide.md",
+          "startLine": 47,
+          "endLine": 56
+        },
+        {
+          "path": "site/content/user_guide.md",
+          "startLine": 177,
+          "endLine": 184
+        }
+      ],
+      "reasoning": "Documentation for a general-purpose library should use neutral placeholder names (e.g. `myapp`, `app`). The Hugo examples are copy-paste artifacts. The `v0.9` version literal further signals staleness. Users following this guide may mistakenly treat Hugo-specific choices as Cobra idioms.",
+      "remediation": "Replace `hugo`/`Hugo` with `myapp`/`MyApp` (or a clearly fictional placeholder) throughout the code examples. Update the `versionCmd` example to print a generic version string such as `\"MyApp v1.0.0\"`.",
+      "patchRef": "MNT-002.patch"
+    },
+    {
+      "id": "DUP-002",
+      "title": "Triply duplicated tree-traversal and file-creation pattern across three generators",
+      "category": "duplication",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The pattern of recursing into available subcommands, constructing a basename, creating a file, writing a prepender, and delegating to a `Custom` generator is copy-pasted verbatim three times. Any fix to error handling, file permissions, or traversal logic must be applied in three places.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "doc/man",
+        "doc/rest",
+        "doc/md",
+        "doc/yaml"
+      ],
+      "evidence": [
+        {
+          "path": "doc/man_docs.go",
+          "startLine": 48,
+          "endLine": 80
+        },
+        {
+          "path": "doc/rest_docs.go",
+          "startLine": 145,
+          "endLine": 170
+        },
+        {
+          "path": "doc/md_docs.go",
+          "startLine": 133,
+          "endLine": 158
+        },
+        {
+          "path": "doc/yaml_docs.go",
+          "startLine": 60,
+          "endLine": 85
+        }
+      ],
+      "reasoning": "GenManTreeFromOpts (man_docs.go:48–80), GenReSTTreeCustom (rest_docs.go:145–170), GenMarkdownTreeCustom (md_docs.go:133–158), and GenYamlTreeCustom (yaml_docs.go:60–85) all implement the same recursive descent: filter `IsAvailableCommand && !IsAdditionalHelpTopicCommand`, recurse, build filename from CommandPath, `os.Create`, `defer f.Close()`, write prepender, write content. The only variation is the file extension and the leaf-generation function.",
+      "remediation": "Extract a generic `genTree(cmd, dir, ext string, prepender func(string) string, generator func(*cobra.Command, io.Writer) error) error` helper and delegate from each exported function. This collapses ~100 lines of duplicated logic into one."
+    },
+    {
+      "id": "MNT-009",
+      "title": "Tool installs use @latest making builds non-deterministic",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "go install …@latest fetches whatever is current at run time. A breaking release of richgo or gox silently breaks CI across all matrix legs simultaneously with no rollback path short of pinning after the fact.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test-unix",
+        "test-win"
+      ],
+      "evidence": [
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 85,
+          "endLine": 86
+        },
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 122,
+          "endLine": 123
+        }
+      ],
+      "reasoning": "Lines 85-86 (test-unix) and 122-123 (test-win) install richgo and gox with @latest. These steps are also duplicated verbatim between the two jobs. Reproducible CI requires pinned versions so that a given commit always produces the same test output regardless of when the workflow runs.",
+      "remediation": "Pin both tools to explicit release tags (e.g., go install github.com/kyoh86/richgo@v0.3.10). Extract the install logic into a composite action or reusable workflow to eliminate the duplication.",
+      "patchRef": "MNT-009.patch"
+    },
+    {
+      "id": "TEST-003",
+      "title": "Shared Command instances with manual flag-state resets create fragile inter-subtest coupling",
+      "category": "testing",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Flag .Changed state leaks between sequential executeCommand invocations on the same Command tree. Manual resets are incomplete (they clear Changed but not the parsed flag value) and silently fail to run if a preceding subtest panics, leaving later cases operating on corrupt state.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "testing"
+      ],
+      "evidence": [
+        {
+          "path": "completions_test.go",
+          "startLine": 157,
+          "endLine": 320
+        }
+      ],
+      "reasoning": "TestNoCmdNameCompletionInGo reuses the same rootCmd/childCmd1/childCmd2 tree across eight sequential executeCommand calls (lines 183, 197, 216, 238, 258, 272, 288, 305). After flag-exercising calls, the test manually resets nonPersistentFlag.Changed = false (lines 202, 245, 277), persistentFlag.Changed = false (lines 293, 310), and rootCmd.TraverseChildren (lines 221, 243). These resets are not deferred, do not clear the flag's parsed value, and impose an implicit execution-order dependency. The executeCommandC helper (command_test.go:48-57) calls SetOut/SetErr/SetArgs each time but cannot reset pflag internals, making command re-use inherently leaky.",
+      "remediation": "Extract each scenario into a t.Run() subtest that constructs its own fresh Command tree. This eliminates all manual resets, enables t.Parallel() per subtest, and makes each case self-contained. A small builder function (e.g. buildNoCmdNameTree()) avoids duplicating the setup."
+    },
+    {
+      "id": "MNT-010",
+      "title": "golangci-lint action pins action version but not linter version",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.92,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "version: latest means the linter binary itself is fetched at whatever is newest at run time. A new golangci-lint release can introduce new enabled linters or changed defaults, causing spurious CI failures on unchanged code.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "golangci-lint"
+      ],
+      "evidence": [
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 50,
+          "endLine": 53
+        }
+      ],
+      "reasoning": "Line 50 pins the action to golangci/golangci-lint-action@v8.0.0, which is good, but line 52 passes version: latest to that action. The action and the linter binary are versioned independently. Pinning only the action wrapper while leaving the tool version floating defeats the reproducibility goal.",
+      "remediation": "Replace version: latest with a specific golangci-lint release, e.g., version: v1.59.1. Update this pin deliberately as part of dependency maintenance.",
+      "patchRef": "MNT-010.patch"
+    },
+    {
+      "id": "MNT-011",
+      "title": "open-pull-requests-limit set to 99 — will flood PR queue",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.92,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "A limit of 99 concurrent Dependabot PRs makes review triage impractical, increases CI cost, and risks merge conflicts cascading across dozens of branches. The GitHub default is 5; most projects use 5–10.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        ".github"
+      ],
+      "evidence": [
+        {
+          "path": ".github/dependabot.yml",
+          "startLine": 7,
+          "endLine": 7
+        },
+        {
+          "path": ".github/dependabot.yml",
+          "startLine": 12,
+          "endLine": 12
+        }
+      ],
+      "reasoning": "Both ecosystem blocks (lines 7 and 12) set `open-pull-requests-limit: 99`. For a solo or small-team project this is operationally unsound: 99 simultaneously open PRs each consume CI minutes and can block each other, making the automated updates counterproductive.",
+      "remediation": "Lower both limits to a manageable number (5–10). Use grouped updates (`groups:`) if you want to batch ecosystem updates into a single PR to reduce noise further."
+    },
+    {
+      "id": "MNT-001",
+      "title": "Imperative sequential test style duplicates boilerplate instead of table-driven tests",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The executeCommand + strings.Join + if output != expected pattern repeats verbatim dozens of times per function, inflating completions_test.go to 4130 lines and command_test.go to 2955 lines. Adding a new case requires copying 10–15 lines of glue code and is easy to get wrong; reviewing diffs is proportionally harder.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "testing"
+      ],
+      "evidence": [
+        {
+          "path": "completions_test.go",
+          "startLine": 55,
+          "endLine": 155
+        },
+        {
+          "path": "completions_test.go",
+          "startLine": 157,
+          "endLine": 320
+        },
+        {
+          "path": "command_test.go",
+          "startLine": 88,
+          "endLine": 260
+        }
+      ],
+      "reasoning": "TestCmdNameCompletionInGo (completions_test.go:55–155) repeats the execute+compare pattern four times. TestNoCmdNameCompletionInGo (completions_test.go:157–320) repeats it eight times, with shared mutable state complicating each repetition. The pattern is consistent enough that a table-driven approach with []struct{name, args string, expected string} would reduce each function by 50–70%, make all cases enumerable at a glance, and trivially support adding new cases without state management concerns.",
+      "remediation": "Refactor each test function to a table-driven loop: define a slice of named test cases capturing input args and expected output, then call t.Run(tc.name, func(t *testing.T) { ... }) per case with a fresh command tree built inside each closure. This also unlocks t.Parallel() per subtest."
+    },
+    {
+      "id": "SEC-001",
+      "title": "addlicense Docker image used without tag or digest pin",
+      "category": "security",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Pulling an untagged image (ghcr.io/google/addlicense with no tag or SHA digest) means the workflow silently adopts whatever the registry's latest pointer resolves to. A supply-chain compromise or accidental push to that image could execute arbitrary code in CI with read access to the checkout.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "lic-headers"
+      ],
+      "evidence": [
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 26,
+          "endLine": 27
+        }
+      ],
+      "reasoning": "Line 26-27 runs docker pull ghcr.io/google/addlicense without a version tag or @sha256 digest. GitHub's security hardening guide and SLSA level 2+ both require pinning third-party actions and images by digest for this reason. The risk is compounded because this step runs before any tests, so a poisoned image executes early in the pipeline.",
+      "remediation": "Pin to a specific release tag and ideally a digest: ghcr.io/google/addlicense:v1.0.0@sha256:<digest>. Verify the digest from the upstream release page."
+    },
+    {
+      "id": "TEST-004",
+      "title": "Test fixtures use package-level mutable vars causing inter-test interference",
+      "category": "testing",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.9,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Package-level `var rootCmd`, `echoCmd`, etc. are mutated in test bodies (flags hidden, DisableAutoGenTag set) with `defer` cleanup. If a test panics or a `defer` fires out of order, subsequent tests in the same run see corrupted state. go test runs all tests in the same process sequentially by default but `-parallel` or future test additions can expose this.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "doc/testing"
+      ],
+      "evidence": [
+        {
+          "path": "doc/cmd_test.go",
+          "startLine": 47,
+          "endLine": 93
+        },
+        {
+          "path": "doc/man_docs_test.go",
+          "startLine": 76,
+          "endLine": 80
+        },
+        {
+          "path": "doc/man_docs_test.go",
+          "startLine": 106,
+          "endLine": 107
+        },
+        {
+          "path": "doc/md_docs_test.go",
+          "startLine": 60,
+          "endLine": 64
+        },
+        {
+          "path": "doc/md_docs_test.go",
+          "startLine": 82,
+          "endLine": 83
+        }
+      ],
+      "reasoning": "cmd_test.go:47–93 declares shared command vars at package scope with flags wired in `init()`. Multiple test functions mutate these vars (e.g. man_docs_test.go:76–80 hides flags, man_docs_test.go:106 sets DisableAutoGenTag, md_docs_test.go:82 sets DisableAutoGenTag on rootCmd) and rely on `defer` for cleanup. This is fragile: a panic skips defers, and the init() function modifying persistent state runs only once.",
+      "remediation": "Introduce a `newTestCommands() (*cobra.Command, ...)` factory that returns a fresh command tree per test. Tests that need shared setup can call it in a `TestMain` and copy as needed."
+    },
+    {
+      "id": "MNT-003",
+      "title": "Completion Run function silently discards errors from shell completion generators",
+      "category": "maintainability",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The canonical `completionCmd.Run` at lines 79–85 calls `cmd.Root().GenBashCompletion(os.Stdout)`, `GenZshCompletion`, `GenFishCompletion`, and `GenPowerShellCompletionWithDesc` without checking their error returns. Every one of these functions returns `error`. Users following this example will write programs that silently emit partial or empty completion scripts on I/O failure, providing no actionable feedback.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "site/content/completions"
+      ],
+      "evidence": [
+        {
+          "path": "site/content/completions/_index.md",
+          "startLine": 76,
+          "endLine": 88
+        }
+      ],
+      "reasoning": "Go idiom requires that every returned error be inspected at call sites in production code. Documentation showing error elision teaches poor practice to readers who treat examples as templates. The correct pattern is to switch to `RunE`, propagate errors, and let Cobra print them.",
+      "remediation": "Change `Run` to `RunE` and return any error from the generator calls, e.g. `return cmd.Root().GenBashCompletion(os.Stdout)`. This also eliminates the need for a separate `default:` unreachable branch since the `Args` validator already enforces `OnlyValidArgs`."
+    },
+    {
+      "id": "DUP-005",
+      "title": "De-duplicate the shell-completion wire protocol reimplemented per shell",
+      "category": "duplication",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The `<completions>:<directive>` response protocol and the directive bitmask constants are re-encoded by hand inside every generated shell script. The parsing logic is byte-for-byte identical between the V1 and V2 bash generators, and the directive integer values are hard-copied into each template as local shell variables. Any change to the protocol (new directive, format tweak) must be edited in lockstep across all generators or shells will silently diverge.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "(root)"
+      ],
+      "evidence": [
+        {
+          "path": "bash_completions.go",
+          "startLine": 79,
+          "endLine": 83
+        },
+        {
+          "path": "bash_completions.go",
+          "startLine": 108,
+          "endLine": 115
+        },
+        {
+          "path": "bash_completionsV2.go",
+          "startLine": 99,
+          "endLine": 104
+        },
+        {
+          "path": "bash_completionsV2.go",
+          "startLine": 86,
+          "endLine": 93
+        }
+      ],
+      "reasoning": "bash_completions.go:108-115 and bash_completionsV2.go:86-93 contain identical directive-extraction logic (`directive=${out##*:}` / `out=${out%%:*}` / default-to-0). The directive constants are likewise duplicated as locals at bash_completions.go:79-83 and bash_completionsV2.go:99-104. This is duplicated business logic across files: the protocol contract lives in Go (completions.go) but is re-implemented untyped in each shell template, so the Go and shell sides can drift undetected.",
+      "remediation": "Generate the directive constants and the parse-the-directive snippet from a single Go source of truth (e.g. a shared template fragment or a generated header rendered into each script) rather than re-typing them per shell, and add a generator golden-test that asserts every shell template agrees on the constant values."
+    },
+    {
+      "id": "ARCH-002",
+      "title": "Replace process-global flag-completion registry with per-command state",
+      "category": "architecture",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.82,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "A single package-level map shared by every Command in the process is a hidden global coupling: it is keyed by *pflag.Flag pointers, guarded by one global RWMutex, never garbage-collected, and silently shared across independent command trees. This causes test pollution (entries from one test leak into the next), prevents two command trees in the same process from being isolated, and grows unbounded for long-lived processes that build commands dynamically.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "(root)"
+      ],
+      "evidence": [
+        {
+          "path": "completions.go",
+          "startLine": 37,
+          "endLine": 41
+        },
+        {
+          "path": "completions.go",
+          "startLine": 170,
+          "endLine": 197
+        }
+      ],
+      "reasoning": "completions.go:38 declares `flagCompletionFunctions` as a package-global map and completions.go:41 a single global mutex. RegisterFlagCompletionFunc (175-182) and GetFlagCompletionFunc (192-196) read/write this global, so every Command instance in the process mutates one shared structure. Pointer-keyed global state is the classic source of cross-instance contamination and is the reason the test suite must manually reset command state between cases.",
+      "remediation": "Move the flag→completion-func mapping onto the Command (or onto a per-root registry) instead of a package global. If backward compatibility forces a global, at minimum delete entries when flags/commands are torn down and expose a reset hook the test suite can call between cases."
+    },
+    {
+      "id": "CPLX-001",
+      "title": "Decompose the Command god-object that mixes config, runtime state, IO and caches",
+      "category": "complexity",
+      "severity": "medium",
+      "confidence": {
+        "score": 0.74,
+        "level": "medium"
+      },
+      "impact": {
+        "rationale": "The central `Command` type concentrates public configuration, ten lifecycle hooks each with error/non-error twins, user-supplied IO writers, and private derived caches in one 2000+ line file. This makes the type hard to reason about (which fields are inputs vs. cached derivations?), easy to misuse (mutating a cache field directly, as tests do), and a perpetual merge hotspot since nearly every feature touches it.",
+        "effort": "L"
+      },
+      "affectedComponents": [
+        "(root)"
+      ],
+      "evidence": [
+        {
+          "path": "command.go",
+          "startLine": 54,
+          "endLine": 250
+        },
+        {
+          "path": "command.go",
+          "startLine": 128,
+          "endLine": 146
+        },
+        {
+          "path": "command.go",
+          "startLine": 159,
+          "endLine": 169
+        }
+      ],
+      "reasoning": "The struct (command.go:54-250) interleaves public knobs (Use, Aliases, Args, Version…), ten parallel hooks (128-146: Persistent/Pre/Post × Run/RunE), IO writers, and explicitly cache-only fields documented as 'does not represent internal state' (159-164: lflags/iflags). Mixing authored configuration with mutable derived caches in the same exported struct is what allows external code and tests to poke internal cache fields, and the file size makes the execution flow hard to follow.",
+      "remediation": "Separate concerns: keep authored configuration on Command, move derived/cached flag sets and execution bookkeeping into an unexported internal struct (or compute lazily behind accessors), and consider collapsing the Run/RunE hook pairs behind a single error-returning signature to halve the lifecycle surface."
+    },
+    {
+      "id": "TEST-001",
+      "title": "Test helpers omit t.Helper(), reporting wrong failure locations",
+      "category": "testing",
+      "severity": "low",
+      "confidence": {
+        "score": 1,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Every assertion failure from checkStringContains/checkStringOmits prints the line number inside the helper body instead of the call site, wasting debug time across a 2955-line test file.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "testing"
+      ],
+      "evidence": [
+        {
+          "path": "command_test.go",
+          "startLine": 74,
+          "endLine": 84
+        }
+      ],
+      "reasoning": "checkStringContains (line 74) and checkStringOmits (line 80) call t.Errorf but never call t.Helper(). Without t.Helper() as the first statement, the Go testing framework attributes failures to line 76 or 82 inside the helper rather than the caller's file:line. These helpers are called from many locations across the test suite, multiplying the impact of this omission.",
+      "remediation": "Add t.Helper() as the first statement in both checkStringContains and checkStringOmits."
+    },
+    {
+      "id": "DUP-001",
+      "title": "Duplicate main.go boilerplate section appears verbatim twice",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 0.97,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The paragraph 'In a Cobra app, typically the main.go file is very bare…' plus its accompanying code block appear at lines 16–26 (introduction) and again nearly verbatim at lines 144–154 (under '### Create your main.go'). Any future edit to the canonical example requires two in-sync updates; divergence has already occurred (line 16 says 'initializing Cobra', line 144 says 'to initialize Cobra').",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "site/content"
+      ],
+      "evidence": [
+        {
+          "path": "site/content/user_guide.md",
+          "startLine": 16,
+          "endLine": 26
+        },
+        {
+          "path": "site/content/user_guide.md",
+          "startLine": 144,
+          "endLine": 154
+        }
+      ],
+      "reasoning": "Both blocks carry identical intent and nearly identical prose and code. The subtle wording drift (line 16 vs 144) confirms they are being maintained independently. Documentation should reference or link to a single authoritative example rather than duplicating it.",
+      "remediation": "Remove the early instance (lines 16–26) or replace it with a forward reference to the '### Create your main.go' section. Keep a single, authoritative code block."
+    },
+    {
+      "id": "DUP-003",
+      "title": "Duplicated VisitParents+DisableAutoGenTag logic copied three times",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 0.96,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Same three-line block copied into three generators; any semantic change to parent tag inheritance requires triple edits.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "doc/man",
+        "doc/rest",
+        "doc/md"
+      ],
+      "evidence": [
+        {
+          "path": "doc/man_docs.go",
+          "startLine": 225,
+          "endLine": 229
+        },
+        {
+          "path": "doc/rest_docs.go",
+          "startLine": 105,
+          "endLine": 109
+        },
+        {
+          "path": "doc/md_docs.go",
+          "startLine": 91,
+          "endLine": 95
+        }
+      ],
+      "reasoning": "The block `cmd.VisitParents(func(c *cobra.Command) { if c.DisableAutoGenTag { cmd.DisableAutoGenTag = c.DisableAutoGenTag } })` appears identically in man_docs.go:225, rest_docs.go:105, and md_docs.go:91.",
+      "remediation": "Extract to a package-private helper `effectiveAutoGenTag(cmd *cobra.Command) bool` that walks parents without mutation, and call it from all three generators."
+    },
+    {
+      "id": "MNT-004",
+      "title": "Mixed indentation (tab inside space-indented block) in RunE example",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.95,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The `RunE` example at user_guide.md:239–244 uses spaces for all indentation except line 240 (`\treturn err`), which uses a tab. Go tooling (`gofmt`) would rewrite this to all-tabs, so the rendered example is inconsistent with what users will actually see after formatting their code, subtly undermining trust in the documentation.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "site/content"
+      ],
+      "evidence": [
+        {
+          "path": "site/content/user_guide.md",
+          "startLine": 236,
+          "endLine": 245
+        }
+      ],
+      "reasoning": "Consistent indentation in documentation code blocks matters because readers visually parse whitespace structure. A mixed-indentation snippet implies either that the doc was not reviewed or that both styles are acceptable in Go (they are not — `gofmt` enforces tabs).",
+      "remediation": "Convert all indentation in the `RunE` example to tabs to match `gofmt` output. Apply the same audit to any other Go snippets in the file."
+    },
+    {
+      "id": "MNT-005",
+      "title": "ShellCompDirective constants block missing language specifier on fenced code block",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.93,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The block at completions/_index.md:197–236 lists all `ShellCompDirective` constants using a plain ` ``` ` fence with no `go` language tag, while every other code block in the file uses ` ```go `. Site generators and IDEs that apply syntax highlighting will render this block as plain text, degrading readability and breaking visual consistency.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "site/content/completions"
+      ],
+      "evidence": [
+        {
+          "path": "site/content/completions/_index.md",
+          "startLine": 197,
+          "endLine": 236
+        }
+      ],
+      "reasoning": "Consistent language tags on fenced code blocks are required for syntax highlighting pipelines (Hugo, GitHub rendering, IDEs). An unlabelled block is a minor but pervasive friction point that accumulates cognitive overhead for readers scanning the page.",
+      "remediation": "Add `go` to the opening fence: change ` ``` ` to ` ```go ` at line 197."
+    },
+    {
+      "id": "MOD-001",
+      "title": "GO111MODULE: on is obsolete and should be removed",
+      "category": "modernization",
+      "severity": "low",
+      "confidence": {
+        "score": 0.93,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "GO111MODULE was deprecated in Go 1.16 (modules became the default) and the variable was dropped in Go 1.21. Setting it is a no-op for every Go version in the test matrix that is still supported, and it adds misleading signal for future readers who may not know its history.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test-unix",
+        "test-win",
+        "golangci-lint",
+        "lic-headers"
+      ],
+      "evidence": [
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 8,
+          "endLine": 10
+        }
+      ],
+      "reasoning": "Line 9 sets GO111MODULE: on as a workflow-level env var, broadcasting it to all jobs. Because it is defined at the top-level env block it propagates everywhere. Since Go 1.21 removed this variable from the runtime, and the matrix tests go up to 1.24, this configuration is dead weight.",
+      "remediation": "Delete lines 8-10 entirely. No other changes are needed; module mode is unconditionally on for all supported Go versions."
+    },
+    {
+      "id": "DEBT-003",
+      "title": "Matrix tests EOL Go versions, wasting CI minutes",
+      "category": "technical-debt",
+      "severity": "low",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Go's release policy supports only the two most recent major versions. Testing against Go 1.17–1.21 (lines 64–68) consumes CI minutes for versions that receive no security patches and are not representative of user environments. With 8 Go versions × 2 platforms, more than half the matrix legs cover unsupported releases.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "test-unix"
+      ],
+      "evidence": [
+        {
+          "path": ".github/workflows/test.yml",
+          "startLine": 63,
+          "endLine": 71
+        }
+      ],
+      "reasoning": "Lines 64-71 include Go 1.17 through 1.24. As of mid-2025, Go 1.22 and 1.23 are the two supported releases (1.24 is current). Versions 1.17–1.21 are EOL and no longer receive security fixes. Continuing to test them signals support for versions the Go project itself has abandoned, and it inflates the matrix with runs that are unlikely to catch bugs not already caught by supported versions.",
+      "remediation": "Trim the matrix to the two current stable releases plus the tip/RC if desired: go: [22, 23, 24]. Add a comment citing Go's release policy so the intent is clear when updating."
+    },
+    {
+      "id": "DUP-004",
+      "title": "printOptions and printOptionsReST are near-identical options-printing functions",
+      "category": "duplication",
+      "severity": "low",
+      "confidence": {
+        "score": 0.88,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "Two functions doing the same job (fetch non-inherited and inherited flags, check availability, write a section header and flag defaults) with only formatting strings differing. Logic bugs (e.g. wrong flag set used) need fixing twice.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "doc/md",
+        "doc/rest"
+      ],
+      "evidence": [
+        {
+          "path": "doc/md_docs.go",
+          "startLine": 32,
+          "endLine": 49
+        },
+        {
+          "path": "doc/rest_docs.go",
+          "startLine": 30,
+          "endLine": 49
+        }
+      ],
+      "reasoning": "md_docs.go:32–49 (`printOptions`) and rest_docs.go:30–49 (`printOptionsReST`) are structurally identical: get NonInheritedFlags, check HasAvailableFlags, write a heading string, call PrintDefaults, repeat for InheritedFlags. Both return nil unconditionally.",
+      "remediation": "Parametrise the header strings and extract a shared helper, or at minimum note the functions are intentionally format-specific if the divergence is expected to grow."
+    },
+    {
+      "id": "MNT-008",
+      "title": "GenManHeader unexported 'date' field is a hidden coupling between fillHeader and genMan",
+      "category": "maintainability",
+      "severity": "low",
+      "confidence": {
+        "score": 0.85,
+        "level": "high"
+      },
+      "impact": {
+        "rationale": "The unexported `date string` field (man_docs.go:98) is set by `fillHeader` and consumed by `manPreamble`. This creates an implicit contract between two functions through struct mutation; callers who construct a `GenManHeader` and call `genMan` directly (skipping `fillHeader`) will get an empty date in the preamble with no error.",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "doc/man"
+      ],
+      "evidence": [
+        {
+          "path": "doc/man_docs.go",
+          "startLine": 94,
+          "endLine": 101
+        },
+        {
+          "path": "doc/man_docs.go",
+          "startLine": 136,
+          "endLine": 136
+        },
+        {
+          "path": "doc/man_docs.go",
+          "startLine": 149,
+          "endLine": 151
+        }
+      ],
+      "reasoning": "`GenManHeader.date` (line 98) is set at line 136 inside `fillHeader` and read at line 151 inside `manPreamble`. `genMan` calls both, but `genMan` is itself unexported, so the only exposed path is through `GenMan` which calls `fillHeader`. The struct field is still an implementation detail leaking into the exported type.",
+      "remediation": "Pass the formatted date string as a parameter to `manPreamble` instead of storing it in the struct, removing the hidden mutation dependency."
+    },
+    {
+      "id": "TEST-005",
+      "title": "Harden test isolation; white-box tests rely on manual state resets and shared globals",
+      "category": "testing",
+      "severity": "low",
+      "confidence": {
+        "score": 0.7,
+        "level": "medium"
+      },
+      "impact": {
+        "rationale": "Tests are white-box (same package) and depend on manually resetting mutable state between sub-cases, while the global completion registry is never reset. This makes the suite order-dependent and fragile: a forgotten reset or a leaked registry entry produces flaky, hard-to-localize failures, and the pattern signals that production code leaks state that tests must compensate for.",
+        "effort": "M"
+      },
+      "affectedComponents": [
+        "(root)"
+      ],
+      "evidence": [
+        {
+          "path": "completions_test.go",
+          "startLine": 200,
+          "endLine": 245
+        },
+        {
+          "path": "command_test.go",
+          "startLine": 15,
+          "endLine": 15
+        }
+      ],
+      "reasoning": "completions_test.go reuses a single command tree across multiple assertions and must hand-reset shared state mid-test (`nonPersistentFlag.Changed = false` at 202 and 245; `rootCmd.TraverseChildren = false` at 221 and 243). Combined with the never-reset package-global `flagCompletionFunctions` map (completions.go:38), tests are coupled to mutable shared state. The same-package declaration (command_test.go:15) lets tests reach into internals, masking the underlying state-leak rather than testing the public contract.",
+      "remediation": "Build a fresh command tree per sub-case (table-driven helpers that construct commands inside each iteration) instead of mutating one shared instance, add a test helper that clears the completion registry in setup/teardown, and cover the public completion behavior through black-box (`cobra_test`) tests in addition to the internal ones."
+    },
+    {
+      "id": "SEC-002",
+      "title": "Generated completion scripts run user-influenced command lines through eval",
+      "category": "security",
+      "severity": "low",
+      "confidence": {
+        "score": 0.6,
+        "level": "medium"
+      },
+      "impact": {
+        "rationale": "The emitted completion scripts build a request string from the live command-line words and execute it with `eval`. While this is the established mechanism and the words come from the user's own shell, eval-ing a constructed string is the most fragile/dangerous shell construct and warrants an explicit, documented security rationale so downstream maintainers do not extend it carelessly (e.g. by interpolating program-provided strings into the same eval).",
+        "effort": "S"
+      },
+      "affectedComponents": [
+        "(root)"
+      ],
+      "evidence": [
+        {
+          "path": "bash_completions.go",
+          "startLine": 104,
+          "endLine": 106
+        },
+        {
+          "path": "bash_completionsV2.go",
+          "startLine": 82,
+          "endLine": 84
+        }
+      ],
+      "reasoning": "bash_completions.go:106 and bash_completionsV2.go:84 both call `out=$(eval \"${requestComp}\" 2>/dev/null)` where requestComp is assembled from `${words[@]}`. The eval is duplicated across both generators (reinforcing the duplication finding), and the `2>/dev/null` also swallows diagnostics, making misbehavior hard to debug.",
+      "remediation": "Document why eval is required here (alias expansion) directly above each call, and audit that nothing other than the user's own words is interpolated into the eval'd string. Where alias handling is not needed, prefer direct array invocation (`\"${words[0]}\" ... \"${args[@]}\"`) over eval."
+    }
+  ],
+  "patches": [
+    {
+      "findingId": "DEBT-002",
+      "filename": "DEBT-002.patch",
+      "diff": "Index: .github/workflows/test.yml\n===================================================================\n--- .github/workflows/test.yml\tbefore\n+++ .github/workflows/test.yml\tafter\n@@ -1,125 +1,125 @@\n-name: Test\r\n-\r\n-on:\r\n-  push:\r\n-  pull_request:\r\n-  workflow_dispatch:\r\n-\r\n-env:\r\n-  GO111MODULE: on\r\n-\r\n-permissions:\r\n-  contents: read\r\n-\r\n-jobs:\r\n-\r\n-\r\n-  lic-headers:\r\n-    runs-on: ubuntu-latest\r\n-    steps:\r\n-\r\n-      - uses: actions/checkout@v4\r\n-\r\n-      - run: >-\r\n-          docker run\r\n-          -v $(pwd):/wrk -w /wrk\r\n-          ghcr.io/google/addlicense\r\n-          -c 'The Cobra Authors'\r\n-          -y '2013-2023'\r\n-          -l apache\r\n-          -ignore '.github/**'\r\n-          -check\r\n-          .\r\n-\r\n-\r\n-  golangci-lint:\r\n-    permissions:\r\n-      contents: read  # for actions/checkout to fetch code\r\n-      pull-requests: read  # for golangci/golangci-lint-action to fetch pull requests\r\n-    runs-on: ubuntu-latest\r\n-    steps:\r\n-\r\n-      - uses: actions/checkout@v4\r\n-\r\n-      - uses: actions/setup-go@v6\r\n-        with:\r\n-          go-version: '^1.22'\r\n-          check-latest: true\r\n-          cache: true\r\n-\r\n-      - uses: golangci/golangci-lint-action@v8.0.0\r\n-        with:\r\n-          version: latest\r\n-          args: --verbose\r\n-\r\n-\r\n-  test-unix:\r\n-    strategy:\r\n-      fail-fast: false\r\n-      matrix:\r\n-        platform:\r\n-        - ubuntu\r\n-        - macOS\r\n-        go:\r\n-        - 17\r\n-        - 18\r\n-        - 19\r\n-        - 20\r\n-        - 21\r\n-        - 22\r\n-        - 23\r\n-        - 24\r\n-    name: '${{ matrix.platform }} | 1.${{ matrix.go }}.x'\r\n-    runs-on: ${{ matrix.platform }}-latest\r\n-    steps:\r\n-\r\n-    - uses: actions/checkout@v4\r\n-\r\n-    - uses: actions/setup-go@v6\r\n-      with:\r\n-        go-version: 1.${{ matrix.go }}.x\r\n-        cache: true\r\n-\r\n-    - run: |\r\n-        export GOBIN=$HOME/go/bin\r\n-        go install github.com/kyoh86/richgo@latest\r\n-        go install github.com/mitchellh/gox@latest\r\n-\r\n-    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin/:$PATH make richtest\r\n-\r\n-\r\n-  test-win:\r\n-    name: MINGW64\r\n-    defaults:\r\n-      run:\r\n-        shell: msys2 {0}\r\n-    runs-on: windows-latest\r\n-    steps:\r\n-\r\n-    - shell: bash\r\n-      run: git config --global core.autocrlf input\r\n-\r\n-    - uses: msys2/setup-msys2@v2\r\n-      with:\r\n-        msystem: MINGW64\r\n-        update: true\r\n-        install: >\r\n-          git\r\n-          make\r\n-          unzip\r\n-          mingw-w64-x86_64-go\r\n-\r\n-    - uses: actions/checkout@v4\r\n-\r\n-    - uses: actions/cache@v4\r\n-      with:\r\n-        path: ~/go/pkg/mod\r\n-        key: ${{ runner.os }}-${{ matrix.go }}-${{ hashFiles('**/go.sum') }}\r\n-        restore-keys: ${{ runner.os }}-${{ matrix.go }}-\r\n-\r\n-    - run: |\r\n-        export GOBIN=$HOME/go/bin\r\n-        go install github.com/kyoh86/richgo@latest\r\n-        go install github.com/mitchellh/gox@latest\r\n-\r\n-    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin:$PATH make richtest\r\n+name: Test\n+\n+on:\n+  push:\n+  pull_request:\n+  workflow_dispatch:\n+\n+env:\n+  GO111MODULE: on\n+\n+permissions:\n+  contents: read\n+\n+jobs:\n+\n+\n+  lic-headers:\n+    runs-on: ubuntu-latest\n+    steps:\n+\n+      - uses: actions/checkout@v4\n+\n+      - run: >-\n+          docker run\n+          -v $(pwd):/wrk -w /wrk\n+          ghcr.io/google/addlicense\n+          -c 'The Cobra Authors'\n+          -y '2013-2023'\n+          -l apache\n+          -ignore '.github/**'\n+          -check\n+          .\n+\n+\n+  golangci-lint:\n+    permissions:\n+      contents: read  # for actions/checkout to fetch code\n+      pull-requests: read  # for golangci/golangci-lint-action to fetch pull requests\n+    runs-on: ubuntu-latest\n+    steps:\n+\n+      - uses: actions/checkout@v4\n+\n+      - uses: actions/setup-go@v6\n+        with:\n+          go-version: '^1.22'\n+          check-latest: true\n+          cache: true\n+\n+      - uses: golangci/golangci-lint-action@v8.0.0\n+        with:\n+          version: latest\n+          args: --verbose\n+\n+\n+  test-unix:\n+    strategy:\n+      fail-fast: false\n+      matrix:\n+        platform:\n+        - ubuntu\n+        - macOS\n+        go:\n+        - 17\n+        - 18\n+        - 19\n+        - 20\n+        - 21\n+        - 22\n+        - 23\n+        - 24\n+    name: '${{ matrix.platform }} | 1.${{ matrix.go }}.x'\n+    runs-on: ${{ matrix.platform }}-latest\n+    steps:\n+\n+    - uses: actions/checkout@v4\n+\n+    - uses: actions/setup-go@v6\n+      with:\n+        go-version: 1.${{ matrix.go }}.x\n+        cache: true\n+\n+    - run: |\n+        export GOBIN=$HOME/go/bin\n+        go install github.com/kyoh86/richgo@latest\n+        go install github.com/mitchellh/gox@latest\n+\n+    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin/:$PATH make richtest\n+\n+\n+  test-win:\n+    name: MINGW64\n+    defaults:\n+      run:\n+        shell: msys2 {0}\n+    runs-on: windows-latest\n+    steps:\n+\n+    - shell: bash\n+      run: git config --global core.autocrlf input\n+\n+    - uses: msys2/setup-msys2@v2\n+      with:\n+        msystem: MINGW64\n+        update: true\n+        install: >\n+          git\n+          make\n+          unzip\n+          mingw-w64-x86_64-go\n+\n+    - uses: actions/checkout@v4\n+\n+    - uses: actions/cache@v4\n+      with:\n+        path: ~/go/pkg/mod\n+        key: ${{ runner.os }}-1.24-${{ hashFiles('**/go.sum') }}\n+        restore-keys: ${{ runner.os }}-1.24-\n+\n+    - run: |\n+        export GOBIN=$HOME/go/bin\n+        go install github.com/kyoh86/richgo@latest\n+        go install github.com/mitchellh/gox@latest\n+\n+    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin:$PATH make richtest\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "DEBT-004",
+      "filename": "DEBT-004.patch",
+      "diff": "Index: .github/dependabot.yml\n===================================================================\n--- .github/dependabot.yml\tbefore\n+++ .github/dependabot.yml\tafter\n@@ -1,12 +1,12 @@\n-version: 2\r\n-updates:\r\n-- package-ecosystem: gomod\r\n-  directory: /\r\n-  schedule:\r\n-    interval: weekly\r\n-  open-pull-requests-limit: 99\r\n-- package-ecosystem: github-actions\r\n-  directory: /\r\n-  schedule:\r\n-    interval: weekly\r\n-  open-pull-requests-limit: 99\r\n+version: 2\n+updates:\n+- package-ecosystem: npm\n+  directory: /\n+  schedule:\n+    interval: weekly\n+  open-pull-requests-limit: 99\n+- package-ecosystem: github-actions\n+  directory: /\n+  schedule:\n+    interval: weekly\n+  open-pull-requests-limit: 99\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "DEBT-001",
+      "filename": "DEBT-001.patch",
+      "diff": "Index: site/content/completions/_index.md\n===================================================================\n--- site/content/completions/_index.md\tbefore\n+++ site/content/completions/_index.md\tafter\n@@ -1,616 +1,619 @@\n-# Generating shell completions\r\n-\r\n-Cobra can generate shell completions for multiple shells.\r\n-The currently supported shells are:\r\n-- Bash\r\n-- Zsh\r\n-- fish\r\n-- PowerShell\r\n-\r\n-Cobra will automatically provide your program with a fully functional `completion` command,\r\n-similarly to how it provides the `help` command. If there are no other subcommands, the\r\n-default `completion` command will be hidden, but still functional.\r\n-\r\n-## Creating your own completion command\r\n-\r\n-If you do not wish to use the default `completion` command, you can choose to\r\n-provide your own, which will take precedence over the default one. (This also provides\r\n-backwards-compatibility with programs that already have their own `completion` command.)\r\n-\r\n-If you are using the `cobra-cli` generator,\r\n-which can be found at [spf13/cobra-cli](https://github.com/spf13/cobra-cli),\r\n-you can create a completion command by running\r\n-\r\n-```bash\r\n-cobra-cli add completion\r\n-```\r\n-and then modifying the generated `cmd/completion.go` file to look something like this\r\n-(writing the shell script to stdout allows the most flexible use):\r\n-\r\n-```go\r\n-var completionCmd = &cobra.Command{\r\n-\tUse:   \"completion [bash|zsh|fish|powershell]\",\r\n-\tShort: \"Generate completion script\",\r\n-\tLong: fmt.Sprintf(`To load completions:\r\n-\r\n-Bash:\r\n-\r\n-  $ source <(%[1]s completion bash)\r\n-\r\n-  # To load completions for each session, execute once:\r\n-  # Linux:\r\n-  $ %[1]s completion bash > /etc/bash_completion.d/%[1]s\r\n-  # macOS:\r\n-  $ %[1]s completion bash > $(brew --prefix)/etc/bash_completion.d/%[1]s\r\n-\r\n-Zsh:\r\n-\r\n-  # If shell completion is not already enabled in your environment,\r\n-  # you will need to enable it.  You can execute the following once:\r\n-\r\n-  $ echo \"autoload -U compinit; compinit\" >> ~/.zshrc\r\n-\r\n-  # To load completions for each session, execute once:\r\n-  $ %[1]s completion zsh > \"${fpath[1]}/_%[1]s\"\r\n-\r\n-  # You will need to start a new shell for this setup to take effect.\r\n-\r\n-fish:\r\n-\r\n-  $ %[1]s completion fish | source\r\n-\r\n-  # To load completions for each session, execute once:\r\n-  $ %[1]s completion fish > ~/.config/fish/completions/%[1]s.fish\r\n-\r\n-PowerShell:\r\n-\r\n-  PS> %[1]s completion powershell | Out-String | Invoke-Expression\r\n-\r\n-  # To load completions for every new session, run:\r\n-  PS> %[1]s completion powershell > %[1]s.ps1\r\n-  # and source this file from your PowerShell profile.\r\n-`,cmd.Root().Name()),\r\n-\tDisableFlagsInUseLine: true,\r\n-\tValidArgs:             []string{\"bash\", \"zsh\", \"fish\", \"powershell\"},\r\n-\tArgs:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),\r\n-\tRun: func(cmd *cobra.Command, args []string) {\r\n-\t\tswitch args[0] {\r\n-\t\tcase \"bash\":\r\n-\t\t\tcmd.Root().GenBashCompletion(os.Stdout)\r\n-\t\tcase \"zsh\":\r\n-\t\t\tcmd.Root().GenZshCompletion(os.Stdout)\r\n-\t\tcase \"fish\":\r\n-\t\t\tcmd.Root().GenFishCompletion(os.Stdout, true)\r\n-\t\tcase \"powershell\":\r\n-\t\t\tcmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)\r\n-\t\t}\r\n-\t},\r\n-}\r\n-```\r\n-\r\n-**Note:** The cobra generator may include messages printed to stdout, for example, if the config file is loaded; this will break the auto-completion script so must be removed.\r\n-\r\n-## Adapting the default completion command\r\n-\r\n-Cobra provides a few options for the default `completion` command.  To configure such options you must set\r\n-the `CompletionOptions` field on the *root* command.\r\n-\r\n-To tell Cobra *not* to provide the default `completion` command:\r\n-```\r\n-rootCmd.CompletionOptions.DisableDefaultCmd = true\r\n-```\r\n-\r\n-To tell Cobra to mark the default `completion` command as *hidden*:\r\n-```\r\n-rootCmd.CompletionOptions.HiddenDefaultCmd = true\r\n-```\r\n-\r\n-To tell Cobra *not* to provide the user with the `--no-descriptions` flag to the completion sub-commands:\r\n-```\r\n-rootCmd.CompletionOptions.DisableNoDescFlag = true\r\n-```\r\n-\r\n-To tell Cobra to completely disable descriptions for completions:\r\n-```\r\n-rootCmd.CompletionOptions.DisableDescriptions = true\r\n-```\r\n-\r\n-# Customizing completions\r\n-\r\n-The generated completion scripts will automatically handle completing commands and flags.  However, you can make your completions much more powerful by providing information to complete your program's nouns and flag values.\r\n-\r\n-## Completion of nouns\r\n-\r\n-### Static completion of nouns\r\n-\r\n-Cobra allows you to provide a pre-defined list of completion choices for your nouns using the `ValidArgs` field.\r\n-For example, if you want `kubectl get [tab][tab]` to show a list of valid \"nouns\" you have to set them.\r\n-Some simplified code from `kubectl get` looks like:\r\n-\r\n-```go\r\n-validArgs = []string{ \"pod\", \"node\", \"service\", \"replicationcontroller\" }\r\n-\r\n-cmd := &cobra.Command{\r\n-\tUse:     \"get [(-o|--output=)json|yaml|template|...] (RESOURCE [NAME] | RESOURCE/NAME ...)\",\r\n-\tShort:   \"Display one or many resources\",\r\n-\tLong:    get_long,\r\n-\tExample: get_example,\r\n-\tRun: func(cmd *cobra.Command, args []string) {\r\n-\t\tcobra.CheckErr(RunGet(f, out, cmd, args))\r\n-\t},\r\n-\tValidArgs: validArgs,\r\n-}\r\n-```\r\n-\r\n-Notice we put the `ValidArgs` field on the `get` sub-command. Doing so will give results like:\r\n-\r\n-```bash\r\n-$ kubectl get [tab][tab]\r\n-node   pod   replicationcontroller   service\r\n-```\r\n-\r\n-#### Aliases for nouns\r\n-\r\n-If your nouns have aliases, you can define them alongside `ValidArgs` using `ArgAliases`:\r\n-\r\n-```go\r\n-argAliases = []string { \"pods\", \"nodes\", \"services\", \"svc\", \"replicationcontrollers\", \"rc\" }\r\n-\r\n-cmd := &cobra.Command{\r\n-    ...\r\n-\tValidArgs:  validArgs,\r\n-\tArgAliases: argAliases\r\n-}\r\n-```\r\n-\r\n-The aliases are shown to the user on tab completion only if no completions were found within sub-commands or `ValidArgs`.\r\n-\r\n-### Dynamic completion of nouns\r\n-\r\n-In some cases it is not possible to provide a list of completions in advance.  Instead, the list of completions must be determined at execution-time. In a similar fashion as for static completions, you can use the `ValidArgsFunction` field to provide a Go function that Cobra will execute when it needs the list of completion choices for the nouns of a command.  Note that either `ValidArgs` or `ValidArgsFunction` can be used for a single cobra command, but not both.\r\n-Simplified code from `helm status` looks like:\r\n-\r\n-```go\r\n-cmd := &cobra.Command{\r\n-\tUse:   \"status RELEASE_NAME\",\r\n-\tShort: \"Display the status of the named release\",\r\n-\tLong:  status_long,\r\n-\tRunE: func(cmd *cobra.Command, args []string) {\r\n-\t\tRunGet(args[0])\r\n-\t},\r\n-\tValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\r\n-\t\tif len(args) != 0 {\r\n-\t\t\treturn nil, cobra.ShellCompDirectiveNoFileComp\r\n-\t\t}\r\n-\t\treturn getReleasesFromCluster(toComplete), cobra.ShellCompDirectiveNoFileComp\r\n-\t},\r\n-}\r\n-```\r\n-Where `getReleasesFromCluster()` is a Go function that obtains the list of current Helm releases running on the Kubernetes cluster.\r\n-Notice we put the `ValidArgsFunction` on the `status` sub-command. Let's assume the Helm releases on the cluster are: `harbor`, `notary`, `rook` and `thanos` then this dynamic completion will give results like:\r\n-\r\n-```bash\r\n-$ helm status [tab][tab]\r\n-harbor notary rook thanos\r\n-```\r\n-You may have noticed the use of `cobra.ShellCompDirective`.  These directives are bit fields allowing to control some shell completion behaviors for your particular completion.  You can combine them with the bit-or operator such as `cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp`\r\n-```go\r\n-// Indicates that the shell will perform its default behavior after completions\r\n-// have been provided (this implies none of the other directives).\r\n-ShellCompDirectiveDefault\r\n-\r\n-// Indicates an error occurred and completions should be ignored.\r\n-ShellCompDirectiveError\r\n-\r\n-// Indicates that the shell should not add a space after the completion,\r\n-// even if there is a single completion provided.\r\n-ShellCompDirectiveNoSpace\r\n-\r\n-// Indicates that the shell should not provide file completion even when\r\n-// no completion is provided.\r\n-ShellCompDirectiveNoFileComp\r\n-\r\n-// Indicates that the returned completions should be used as file extension filters.\r\n-// For example, to complete only files of the form *.json or *.yaml:\r\n-//    return []cobra.Completion{\"yaml\", \"json\"}, cobra.ShellCompDirectiveFilterFileExt\r\n-// For flags, using MarkFlagFilename() and MarkPersistentFlagFilename()\r\n-// is a shortcut to using this directive explicitly.\r\n-//\r\n-ShellCompDirectiveFilterFileExt\r\n-\r\n-// Indicates that only directory names should be provided in file completion.\r\n-// For example:\r\n-//    return nil, cobra.ShellCompDirectiveFilterDirs\r\n-// For flags, using MarkFlagDirname() is a shortcut to using this directive explicitly.\r\n-//\r\n-// To request directory names within another directory, the returned completions\r\n-// should specify a single directory name within which to search. For example,\r\n-// to complete directories within \"themes/\":\r\n-//    return []cobra.Completion{\"themes\"}, cobra.ShellCompDirectiveFilterDirs\r\n-//\r\n-ShellCompDirectiveFilterDirs\r\n-\r\n-// ShellCompDirectiveKeepOrder indicates that the shell should preserve the order\r\n-// in which the completions are provided\r\n-ShellCompDirectiveKeepOrder\r\n-```\r\n-\r\n-***Note***: When using the `ValidArgsFunction`, Cobra will call your registered function after having parsed all flags and arguments provided in the command-line.  You therefore don't need to do this parsing yourself.  For example, when a user calls `helm status --namespace my-rook-ns [tab][tab]`, Cobra will call your registered `ValidArgsFunction` after having parsed the `--namespace` flag, as it would have done when calling the `RunE` function.\r\n-\r\n-#### Debugging\r\n-\r\n-Cobra achieves dynamic completion through the use of a hidden command called by the completion script.  To debug your Go completion code, you can call this hidden command directly:\r\n-```bash\r\n-$ helm __complete status har<ENTER>\r\n-harbor\r\n-:4\r\n-Completion ended with directive: ShellCompDirectiveNoFileComp # This is on stderr\r\n-```\r\n-***Important:*** If the noun to complete is empty (when the user has not yet typed any letters of that noun), you must pass an empty parameter to the `__complete` command:\r\n-```bash\r\n-$ helm __complete status \"\"<ENTER>\r\n-harbor\r\n-notary\r\n-rook\r\n-thanos\r\n-:4\r\n-Completion ended with directive: ShellCompDirectiveNoFileComp # This is on stderr\r\n-```\r\n-Calling the `__complete` command directly allows you to run the Go debugger to troubleshoot your code.  You can also add printouts to your code; Cobra provides the following functions to use for printouts in Go completion code:\r\n-```go\r\n-// Prints to the completion script debug file (if BASH_COMP_DEBUG_FILE\r\n-// is set to a file path) and optionally prints to stderr.\r\n-cobra.CompDebug(msg string, printToStdErr bool)\r\n-cobra.CompDebugln(msg string, printToStdErr bool)\r\n-\r\n-// Prints to the completion script debug file (if BASH_COMP_DEBUG_FILE\r\n-// is set to a file path) and to stderr.\r\n-cobra.CompError(msg string)\r\n-cobra.CompErrorln(msg string)\r\n-```\r\n-***Important:*** You should **not** leave traces that print directly to stdout in your completion code as they will be interpreted as completion choices by the completion script.  Instead, use the cobra-provided debugging traces functions mentioned above.\r\n-\r\n-## Completions for flags\r\n-\r\n-### Mark flags as required\r\n-\r\n-Most of the time completions will only show sub-commands. But if a flag is required to make a sub-command work, you probably want it to show up when the user types [tab][tab].  You can mark a flag as 'Required' like so:\r\n-\r\n-```go\r\n-cmd.MarkFlagRequired(\"pod\")\r\n-cmd.MarkFlagRequired(\"container\")\r\n-```\r\n-\r\n-and you'll get something like\r\n-\r\n-```bash\r\n-$ kubectl exec [tab][tab]\r\n--c            --container=  -p            --pod=\r\n-```\r\n-\r\n-### Specify dynamic flag completion\r\n-\r\n-As for nouns, Cobra provides a way of defining dynamic completion of flags.  To provide a Go function that Cobra will execute when it needs the list of completion choices for a flag, you must register the function using the `command.RegisterFlagCompletionFunc()` function.\r\n-\r\n-```go\r\n-flagName := \"output\"\r\n-cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\r\n-\treturn []cobra.Completion{\"json\", \"table\", \"yaml\"}, cobra.ShellCompDirectiveDefault\r\n-})\r\n-```\r\n-Notice that calling `RegisterFlagCompletionFunc()` is done through the `command` with which the flag is associated.  In our example this dynamic completion will give results like so:\r\n-\r\n-```bash\r\n-$ helm status --output [tab][tab]\r\n-json table yaml\r\n-```\r\n-\r\n-#### Change the default ShellCompDirective\r\n-\r\n-When no completion function is registered for a leaf command or for a flag, Cobra will\r\n-automatically use `ShellCompDirectiveDefault`, which will invoke the shell's filename completion.\r\n-This implies that when file completion does not apply to a leaf command or to a flag (the command\r\n-or flag does not operate on a filename), turning off file completion requires you to register a\r\n-completion function for that command/flag.\r\n-For example:\r\n-\r\n-```go\r\n-cmd.RegisterFlagCompletionFunc(\"flag-name\", cobra.NoFileCompletions)\r\n-```\r\n-\r\n-If you find that there are more situations where file completion should be turned off than\r\n-when it is applicable, you can recursively change the default `ShellCompDirective` for a command\r\n-and its subcommands to `ShellCompDirectiveNoFileComp`:\r\n-\r\n-```go\r\n-cmd.CompletionOptions.SetDefaultShellCompDirective(ShellCompDirectiveNoFileComp)\r\n-```\r\n-\r\n-If doing so, keep in mind that you should instead register a completion function for leaf commands or\r\n-flags where file completion is applicable. For example:\r\n-\r\n-```go\r\n-cmd.RegisterFlagCompletionFunc(\"flag-name\", cobra.FixedCompletions(nil, ShellCompDirectiveDefault))\r\n-```\r\n-\r\n-To change the default directive for the entire program, set the DefaultShellCompDirective on the root command.\r\n-\r\n-#### Debugging\r\n-\r\n-You can also easily debug your Go completion code for flags:\r\n-```bash\r\n-$ helm __complete status --output \"\"\r\n-json\r\n-table\r\n-yaml\r\n-:4\r\n-Completion ended with directive: ShellCompDirectiveNoFileComp # This is on stderr\r\n-```\r\n-***Important:*** You should **not** leave traces that print to stdout in your completion code as they will be interpreted as completion choices by the completion script.  Instead, use the cobra-provided debugging traces functions mentioned further above.\r\n-\r\n-### Specify valid filename extensions for flags that take a filename\r\n-\r\n-To limit completions of flag values to file names with certain extensions you can either use the different `MarkFlagFilename()` functions or a combination of `RegisterFlagCompletionFunc()` and `ShellCompDirectiveFilterFileExt`, like so:\r\n-```go\r\n-flagName := \"output\"\r\n-cmd.MarkFlagFilename(flagName, \"yaml\", \"json\")\r\n-```\r\n-or\r\n-```go\r\n-flagName := \"output\"\r\n-cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\r\n-\treturn []cobra.Completion{\"yaml\", \"json\"}, cobra.ShellCompDirectiveFilterFileExt})\r\n-```\r\n-\r\n-### Limit flag completions to directory names\r\n-\r\n-To limit completions of flag values to directory names you can either use the `MarkFlagDirname()` functions or a combination of `RegisterFlagCompletionFunc()` and `ShellCompDirectiveFilterDirs`, like so:\r\n-```go\r\n-flagName := \"output\"\r\n-cmd.MarkFlagDirname(flagName)\r\n-```\r\n-or\r\n-```go\r\n-flagName := \"output\"\r\n-cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\r\n-\treturn nil, cobra.ShellCompDirectiveFilterDirs\r\n-})\r\n-```\r\n-To limit completions of flag values to directory names *within another directory* you can use a combination of `RegisterFlagCompletionFunc()` and `ShellCompDirectiveFilterDirs` like so:\r\n-```go\r\n-flagName := \"output\"\r\n-cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\r\n-\treturn []cobra.Completion{\"themes\"}, cobra.ShellCompDirectiveFilterDirs\r\n-})\r\n-```\r\n-### Descriptions for completions\r\n-\r\n-Cobra provides support for completion descriptions.  Such descriptions are supported for each shell\r\n-(however, for bash, it is only available in the [completion V2 version](#bash-completion-v2)).\r\n-For commands and flags, Cobra will provide the descriptions automatically, based on usage information.\r\n-For example, using zsh:\r\n-```\r\n-$ helm s[tab]\r\n-search  -- search for a keyword in charts\r\n-show    -- show information of a chart\r\n-status  -- displays the status of the named release\r\n-```\r\n-while using fish:\r\n-```\r\n-$ helm s[tab]\r\n-search  (search for a keyword in charts)  show  (show information of a chart)  status  (displays the status of the named release)\r\n-```\r\n-\r\n-Cobra allows you to add descriptions to your own completions.  Simply add the description text after each completion, following a `\\t` separator. Cobra provides the helper function `CompletionWithDesc(string, string)` to create a completion with a description. This technique applies to completions returned by `ValidArgs`, `ValidArgsFunction` and `RegisterFlagCompletionFunc()`.  For example:\r\n-```go\r\n-ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\r\n-\treturn []cobra.Completion{\r\n-\t\tcobra.CompletionWithDesc(\"harbor\", \"An image registry\"),\r\n-\t\tcobra.CompletionWithDesc(\"thanos\", \"Long-term metrics\")\r\n-\t\t}, cobra.ShellCompDirectiveNoFileComp\r\n-}}\r\n-```\r\n-or\r\n-```go\r\n-ValidArgs: []cobra.Completion{\r\n-\tcobra.CompletionWithDesc(\"bash\", \"Completions for bash\"),\r\n-\tcobra.CompletionWithDesc(\"zsh\", \"Completions for zsh\")\r\n-\t}\r\n-```\r\n-\r\n-If you don't want to show descriptions in the completions, you can add `--no-descriptions` to the default `completion` command to disable them, like:\r\n-\r\n-```bash\r\n-$ source <(helm completion bash)\r\n-$ helm completion [tab][tab]\r\n-bash        (generate autocompletion script for bash)        powershell  (generate autocompletion script for powershell)\r\n-fish        (generate autocompletion script for fish)        zsh         (generate autocompletion script for zsh)\r\n-\r\n-$ source <(helm completion bash --no-descriptions)\r\n-$ helm completion [tab][tab]\r\n-bash        fish        powershell  zsh\r\n-```\r\n-\r\n-Setting the `<PROGRAM>_COMPLETION_DESCRIPTIONS` environment variable (falling back to `COBRA_COMPLETION_DESCRIPTIONS` if empty or not set) to a [falsey value](https://pkg.go.dev/strconv#ParseBool) achieves the same. `<PROGRAM>` is the name of your program with all non-ASCII-alphanumeric characters replaced by `_`.\r\n-\r\n-## Bash completions\r\n-\r\n-### Dependencies\r\n-\r\n-The bash completion script generated by Cobra requires the `bash_completion` package. You should update the help text of your completion command to show how to install the `bash_completion` package ([Kubectl docs](https://kubernetes.io/docs/tasks/tools/install-kubectl/#enabling-shell-autocompletion))\r\n-\r\n-### Aliases\r\n-\r\n-You can also configure `bash` aliases for your program and they will also support completions.\r\n-\r\n-```bash\r\n-alias aliasname=origcommand\r\n-complete -o default -F __start_origcommand aliasname\r\n-\r\n-# and now when you run `aliasname` completion will make\r\n-# suggestions as it did for `origcommand`.\r\n-\r\n-$ aliasname <tab><tab>\r\n-completion     firstcommand   secondcommand\r\n-```\r\n-### Bash legacy dynamic completions\r\n-\r\n-For backward compatibility, Cobra still supports its bash legacy dynamic completion solution.\r\n-Please refer to [Bash Completions](bash.md) for details.\r\n-\r\n-### Bash completion V2\r\n-\r\n-Cobra provides two versions for bash completion.  The original bash completion (which started it all!) can be used by calling\r\n-`GenBashCompletion()` or `GenBashCompletionFile()`.\r\n-\r\n-A new V2 bash completion version is also available.  This version can be used by calling `GenBashCompletionV2()` or\r\n-`GenBashCompletionFileV2()`.  The V2 version does **not** support the legacy dynamic completion\r\n-(see [Bash Completions](bash.md)) but instead works only with the Go dynamic completion\r\n-solution described in this document.\r\n-Unless your program already uses the legacy dynamic completion solution, it is recommended that you use the bash\r\n-completion V2 solution which provides the following extra features:\r\n-- Supports completion descriptions (like the other shells)\r\n-- Small completion script of less than 300 lines (v1 generates scripts of thousands of lines; `kubectl` for example has a bash v1 completion script of over 13K lines)\r\n-- Streamlined user experience thanks to a completion behavior aligned with the other shells\r\n-\r\n-`Bash` completion V2 supports descriptions for completions. When calling `GenBashCompletionV2()` or `GenBashCompletionFileV2()`\r\n-you must provide these functions with a parameter indicating if the completions should be annotated with a description; Cobra\r\n-will provide the description automatically based on usage information.  You can choose to make this option configurable by\r\n-your users.\r\n-\r\n-```\r\n-# With descriptions\r\n-$ helm s[tab][tab]\r\n-search  (search for a keyword in charts)           status  (display the status of the named release)\r\n-show    (show information of a chart)\r\n-\r\n-# Without descriptions\r\n-$ helm s[tab][tab]\r\n-search  show  status\r\n-```\r\n-**Note**: Cobra's default `completion` command uses bash completion V2.  If for some reason you need to use bash completion V1, you will need to implement your own `completion` command.\r\n-## Zsh completions\r\n-\r\n-Cobra supports native zsh completion generated from the root `cobra.Command`.\r\n-The generated completion script should be put somewhere in your `$fpath` and be named\r\n-`_<yourProgram>`.  You will need to start a new shell for the completions to become available.\r\n-\r\n-Zsh supports descriptions for completions. Cobra will provide the description automatically,\r\n-based on usage information. Cobra provides a way to completely disable such descriptions by\r\n-using `GenZshCompletionNoDesc()` or `GenZshCompletionFileNoDesc()`. You can choose to make\r\n-this a configurable option to your users.\r\n-```\r\n-# With descriptions\r\n-$ helm s[tab]\r\n-search  -- search for a keyword in charts\r\n-show    -- show information of a chart\r\n-status  -- displays the status of the named release\r\n-\r\n-# Without descriptions\r\n-$ helm s[tab]\r\n-search  show  status\r\n-```\r\n-*Note*: Because of backward-compatibility requirements, we were forced to have a different API to disable completion descriptions between `zsh` and `fish`.\r\n-\r\n-### Limitations\r\n-\r\n-* Custom completions implemented in Bash scripting (legacy) are not supported and will be ignored for `zsh` (including the use of the `BashCompCustom` flag annotation).\r\n-  * You should instead use `ValidArgsFunction` and `RegisterFlagCompletionFunc()` which are portable to the different shells (`bash`, `zsh`, `fish`, `powershell`).\r\n-* The function `MarkFlagCustom()` is not supported and will be ignored for `zsh`.\r\n-  * You should instead use `RegisterFlagCompletionFunc()`.\r\n-\r\n-### Zsh completions standardization\r\n-\r\n-Cobra 1.1 standardized its zsh completion support to align it with its other shell completions.  Although the API was kept backward-compatible, some small changes in behavior were introduced.\r\n-Please refer to [Zsh Completions](zsh.md) for details.\r\n-\r\n-## fish completions\r\n-\r\n-Cobra supports native fish completions generated from the root `cobra.Command`.  You can use the `command.GenFishCompletion()` or `command.GenFishCompletionFile()` functions. You must provide these functions with a parameter indicating if the completions should be annotated with a description; Cobra will provide the description automatically based on usage information.  You can choose to make this option configurable by your users.\r\n-```\r\n-# With descriptions\r\n-$ helm s[tab]\r\n-search  (search for a keyword in charts)  show  (show information of a chart)  status  (displays the status of the named release)\r\n-\r\n-# Without descriptions\r\n-$ helm s[tab]\r\n-search  show  status\r\n-```\r\n-*Note*: Because of backward-compatibility requirements, we were forced to have a different API to disable completion descriptions between `zsh` and `fish`.\r\n-\r\n-### Limitations\r\n-\r\n-* Custom completions implemented in bash scripting (legacy) are not supported and will be ignored for `fish` (including the use of the `BashCompCustom` flag annotation).\r\n-  * You should instead use `ValidArgsFunction` and `RegisterFlagCompletionFunc()` which are portable to the different shells (`bash`, `zsh`, `fish`, `powershell`).\r\n-* The function `MarkFlagCustom()` is not supported and will be ignored for `fish`.\r\n-  * You should instead use `RegisterFlagCompletionFunc()`.\r\n-* The following flag completion annotations are not supported and will be ignored for `fish`:\r\n-  * `BashCompFilenameExt` (filtering by file extension)\r\n-  * `BashCompSubdirsInDir` (filtering by directory)\r\n-* The functions corresponding to the above annotations are consequently not supported and will be ignored for `fish`:\r\n-  * `MarkFlagFilename()` and `MarkPersistentFlagFilename()` (filtering by file extension)\r\n-  * `MarkFlagDirname()` and `MarkPersistentFlagDirname()` (filtering by directory)\r\n-* Similarly, the following completion directives are not supported and will be ignored for `fish`:\r\n-  * `ShellCompDirectiveFilterFileExt` (filtering by file extension)\r\n-  * `ShellCompDirectiveFilterDirs` (filtering by directory)\r\n-\r\n-## PowerShell completions\r\n-\r\n-Cobra supports native PowerShell completions generated from the root `cobra.Command`. You can use the `command.GenPowerShellCompletion()` or `command.GenPowerShellCompletionFile()` functions. To include descriptions use `command.GenPowerShellCompletionWithDesc()` and `command.GenPowerShellCompletionFileWithDesc()`. Cobra will provide the description automatically based on usage information. You can choose to make this option configurable by your users.\r\n-\r\n-The script is designed to support all three PowerShell completion modes:\r\n-\r\n-* TabCompleteNext (default windows style - on each key press the next option is displayed)\r\n-* Complete (works like bash)\r\n-* MenuComplete (works like zsh)\r\n-\r\n-You set the mode with `Set-PSReadLineKeyHandler -Key Tab -Function <mode>`. Descriptions are only displayed when using the `Complete` or `MenuComplete` mode.\r\n-\r\n-Users need PowerShell version 5.0 or above, which comes with Windows 10 and can be downloaded separately for Windows 7 or 8.1. They can then write the completions to a file and source this file from their PowerShell profile, which is referenced by the `$Profile` environment variable. See `Get-Help about_Profiles` for more info about PowerShell profiles.\r\n-\r\n-```\r\n-# With descriptions and Mode 'Complete'\r\n-$ helm s[tab]\r\n-search  (search for a keyword in charts)  show  (show information of a chart)  status  (displays the status of the named release)\r\n-\r\n-# With descriptions and Mode 'MenuComplete' The description of the current selected value will be displayed below the suggestions.\r\n-$ helm s[tab]\r\n-search    show     status\r\n-\r\n-search for a keyword in charts\r\n-\r\n-# Without descriptions\r\n-$ helm s[tab]\r\n-search  show  status\r\n-```\r\n-### Aliases\r\n-\r\n-You can also configure `powershell` aliases for your program and they will also support completions.\r\n-\r\n-```\r\n-$ sal aliasname origcommand\r\n-$ Register-ArgumentCompleter -CommandName 'aliasname' -ScriptBlock $__origcommandCompleterBlock\r\n-\r\n-# and now when you run `aliasname` completion will make\r\n-# suggestions as it did for `origcommand`.\r\n-\r\n-$ aliasname <tab>\r\n-completion     firstcommand   secondcommand\r\n-```\r\n-The name of the completer block variable is of the form `$__<programName>CompleterBlock` where every `-` and `:` in the program name have been replaced with `_`, to respect powershell naming syntax.\r\n-\r\n-### Limitations\r\n-\r\n-* Custom completions implemented in bash scripting (legacy) are not supported and will be ignored for `powershell` (including the use of the `BashCompCustom` flag annotation).\r\n-  * You should instead use `ValidArgsFunction` and `RegisterFlagCompletionFunc()` which are portable to the different shells (`bash`, `zsh`, `fish`, `powershell`).\r\n-* The function `MarkFlagCustom()` is not supported and will be ignored for `powershell`.\r\n-  * You should instead use `RegisterFlagCompletionFunc()`.\r\n-* The following flag completion annotations are not supported and will be ignored for `powershell`:\r\n-  * `BashCompFilenameExt` (filtering by file extension)\r\n-  * `BashCompSubdirsInDir` (filtering by directory)\r\n-* The functions corresponding to the above annotations are consequently not supported and will be ignored for `powershell`:\r\n-  * `MarkFlagFilename()` and `MarkPersistentFlagFilename()` (filtering by file extension)\r\n-  * `MarkFlagDirname()` and `MarkPersistentFlagDirname()` (filtering by directory)\r\n-* Similarly, the following completion directives are not supported and will be ignored for `powershell`:\r\n-  * `ShellCompDirectiveFilterFileExt` (filtering by file extension)\r\n-  * `ShellCompDirectiveFilterDirs` (filtering by directory)\r\n+# Generating shell completions\n+\n+Cobra can generate shell completions for multiple shells.\n+The currently supported shells are:\n+- Bash\n+- Zsh\n+- fish\n+- PowerShell\n+\n+Cobra will automatically provide your program with a fully functional `completion` command,\n+similarly to how it provides the `help` command. If there are no other subcommands, the\n+default `completion` command will be hidden, but still functional.\n+\n+## Creating your own completion command\n+\n+If you do not wish to use the default `completion` command, you can choose to\n+provide your own, which will take precedence over the default one. (This also provides\n+backwards-compatibility with programs that already have their own `completion` command.)\n+\n+If you are using the `cobra-cli` generator,\n+which can be found at [spf13/cobra-cli](https://github.com/spf13/cobra-cli),\n+you can create a completion command by running\n+\n+```bash\n+cobra-cli add completion\n+```\n+and then modifying the generated `cmd/completion.go` file to look something like this\n+(writing the shell script to stdout allows the most flexible use):\n+\n+```go\n+var completionCmd = &cobra.Command{\n+\tUse:   \"completion [bash|zsh|fish|powershell]\",\n+\tShort: \"Generate completion script\",\n+\tLong: fmt.Sprintf(`To load completions:\n+\n+Bash:\n+\n+  $ source <(%[1]s completion bash)\n+\n+  # To load completions for each session, execute once:\n+  # Linux:\n+  $ %[1]s completion bash > /etc/bash_completion.d/%[1]s\n+  # macOS:\n+  $ %[1]s completion bash > $(brew --prefix)/etc/bash_completion.d/%[1]s\n+\n+Zsh:\n+\n+  # If shell completion is not already enabled in your environment,\n+  # you will need to enable it.  You can execute the following once:\n+\n+  $ echo \"autoload -U compinit; compinit\" >> ~/.zshrc\n+\n+  # To load completions for each session, execute once:\n+  $ %[1]s completion zsh > \"${fpath[1]}/_%[1]s\"\n+\n+  # You will need to start a new shell for this setup to take effect.\n+\n+fish:\n+\n+  $ %[1]s completion fish | source\n+\n+  # To load completions for each session, execute once:\n+  $ %[1]s completion fish > ~/.config/fish/completions/%[1]s.fish\n+\n+PowerShell:\n+\n+  PS> %[1]s completion powershell | Out-String | Invoke-Expression\n+\n+  # To load completions for every new session, run:\n+  PS> %[1]s completion powershell > %[1]s.ps1\n+  # and source this file from your PowerShell profile.\n+`,\n+\t\t// os.Args[0] is used here because cmd.Root().Name() is unavailable\n+\t\t// at package-level initialization time (before init() runs).\n+\t\tos.Args[0]),\n+\tDisableFlagsInUseLine: true,\n+\tValidArgs:             []string{\"bash\", \"zsh\", \"fish\", \"powershell\"},\n+\tArgs:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),\n+\tRun: func(cmd *cobra.Command, args []string) {\n+\t\tswitch args[0] {\n+\t\tcase \"bash\":\n+\t\t\tcmd.Root().GenBashCompletion(os.Stdout)\n+\t\tcase \"zsh\":\n+\t\t\tcmd.Root().GenZshCompletion(os.Stdout)\n+\t\tcase \"fish\":\n+\t\t\tcmd.Root().GenFishCompletion(os.Stdout, true)\n+\t\tcase \"powershell\":\n+\t\t\tcmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)\n+\t\t}\n+\t},\n+}\n+```\n+\n+**Note:** The cobra generator may include messages printed to stdout, for example, if the config file is loaded; this will break the auto-completion script so must be removed.\n+\n+## Adapting the default completion command\n+\n+Cobra provides a few options for the default `completion` command.  To configure such options you must set\n+the `CompletionOptions` field on the *root* command.\n+\n+To tell Cobra *not* to provide the default `completion` command:\n+```\n+rootCmd.CompletionOptions.DisableDefaultCmd = true\n+```\n+\n+To tell Cobra to mark the default `completion` command as *hidden*:\n+```\n+rootCmd.CompletionOptions.HiddenDefaultCmd = true\n+```\n+\n+To tell Cobra *not* to provide the user with the `--no-descriptions` flag to the completion sub-commands:\n+```\n+rootCmd.CompletionOptions.DisableNoDescFlag = true\n+```\n+\n+To tell Cobra to completely disable descriptions for completions:\n+```\n+rootCmd.CompletionOptions.DisableDescriptions = true\n+```\n+\n+# Customizing completions\n+\n+The generated completion scripts will automatically handle completing commands and flags.  However, you can make your completions much more powerful by providing information to complete your program's nouns and flag values.\n+\n+## Completion of nouns\n+\n+### Static completion of nouns\n+\n+Cobra allows you to provide a pre-defined list of completion choices for your nouns using the `ValidArgs` field.\n+For example, if you want `kubectl get [tab][tab]` to show a list of valid \"nouns\" you have to set them.\n+Some simplified code from `kubectl get` looks like:\n+\n+```go\n+validArgs = []string{ \"pod\", \"node\", \"service\", \"replicationcontroller\" }\n+\n+cmd := &cobra.Command{\n+\tUse:     \"get [(-o|--output=)json|yaml|template|...] (RESOURCE [NAME] | RESOURCE/NAME ...)\",\n+\tShort:   \"Display one or many resources\",\n+\tLong:    get_long,\n+\tExample: get_example,\n+\tRun: func(cmd *cobra.Command, args []string) {\n+\t\tcobra.CheckErr(RunGet(f, out, cmd, args))\n+\t},\n+\tValidArgs: validArgs,\n+}\n+```\n+\n+Notice we put the `ValidArgs` field on the `get` sub-command. Doing so will give results like:\n+\n+```bash\n+$ kubectl get [tab][tab]\n+node   pod   replicationcontroller   service\n+```\n+\n+#### Aliases for nouns\n+\n+If your nouns have aliases, you can define them alongside `ValidArgs` using `ArgAliases`:\n+\n+```go\n+argAliases = []string { \"pods\", \"nodes\", \"services\", \"svc\", \"replicationcontrollers\", \"rc\" }\n+\n+cmd := &cobra.Command{\n+    ...\n+\tValidArgs:  validArgs,\n+\tArgAliases: argAliases\n+}\n+```\n+\n+The aliases are shown to the user on tab completion only if no completions were found within sub-commands or `ValidArgs`.\n+\n+### Dynamic completion of nouns\n+\n+In some cases it is not possible to provide a list of completions in advance.  Instead, the list of completions must be determined at execution-time. In a similar fashion as for static completions, you can use the `ValidArgsFunction` field to provide a Go function that Cobra will execute when it needs the list of completion choices for the nouns of a command.  Note that either `ValidArgs` or `ValidArgsFunction` can be used for a single cobra command, but not both.\n+Simplified code from `helm status` looks like:\n+\n+```go\n+cmd := &cobra.Command{\n+\tUse:   \"status RELEASE_NAME\",\n+\tShort: \"Display the status of the named release\",\n+\tLong:  status_long,\n+\tRunE: func(cmd *cobra.Command, args []string) {\n+\t\tRunGet(args[0])\n+\t},\n+\tValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n+\t\tif len(args) != 0 {\n+\t\t\treturn nil, cobra.ShellCompDirectiveNoFileComp\n+\t\t}\n+\t\treturn getReleasesFromCluster(toComplete), cobra.ShellCompDirectiveNoFileComp\n+\t},\n+}\n+```\n+Where `getReleasesFromCluster()` is a Go function that obtains the list of current Helm releases running on the Kubernetes cluster.\n+Notice we put the `ValidArgsFunction` on the `status` sub-command. Let's assume the Helm releases on the cluster are: `harbor`, `notary`, `rook` and `thanos` then this dynamic completion will give results like:\n+\n+```bash\n+$ helm status [tab][tab]\n+harbor notary rook thanos\n+```\n+You may have noticed the use of `cobra.ShellCompDirective`.  These directives are bit fields allowing to control some shell completion behaviors for your particular completion.  You can combine them with the bit-or operator such as `cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp`\n+```go\n+// Indicates that the shell will perform its default behavior after completions\n+// have been provided (this implies none of the other directives).\n+ShellCompDirectiveDefault\n+\n+// Indicates an error occurred and completions should be ignored.\n+ShellCompDirectiveError\n+\n+// Indicates that the shell should not add a space after the completion,\n+// even if there is a single completion provided.\n+ShellCompDirectiveNoSpace\n+\n+// Indicates that the shell should not provide file completion even when\n+// no completion is provided.\n+ShellCompDirectiveNoFileComp\n+\n+// Indicates that the returned completions should be used as file extension filters.\n+// For example, to complete only files of the form *.json or *.yaml:\n+//    return []cobra.Completion{\"yaml\", \"json\"}, cobra.ShellCompDirectiveFilterFileExt\n+// For flags, using MarkFlagFilename() and MarkPersistentFlagFilename()\n+// is a shortcut to using this directive explicitly.\n+//\n+ShellCompDirectiveFilterFileExt\n+\n+// Indicates that only directory names should be provided in file completion.\n+// For example:\n+//    return nil, cobra.ShellCompDirectiveFilterDirs\n+// For flags, using MarkFlagDirname() is a shortcut to using this directive explicitly.\n+//\n+// To request directory names within another directory, the returned completions\n+// should specify a single directory name within which to search. For example,\n+// to complete directories within \"themes/\":\n+//    return []cobra.Completion{\"themes\"}, cobra.ShellCompDirectiveFilterDirs\n+//\n+ShellCompDirectiveFilterDirs\n+\n+// ShellCompDirectiveKeepOrder indicates that the shell should preserve the order\n+// in which the completions are provided\n+ShellCompDirectiveKeepOrder\n+```\n+\n+***Note***: When using the `ValidArgsFunction`, Cobra will call your registered function after having parsed all flags and arguments provided in the command-line.  You therefore don't need to do this parsing yourself.  For example, when a user calls `helm status --namespace my-rook-ns [tab][tab]`, Cobra will call your registered `ValidArgsFunction` after having parsed the `--namespace` flag, as it would have done when calling the `RunE` function.\n+\n+#### Debugging\n+\n+Cobra achieves dynamic completion through the use of a hidden command called by the completion script.  To debug your Go completion code, you can call this hidden command directly:\n+```bash\n+$ helm __complete status har<ENTER>\n+harbor\n+:4\n+Completion ended with directive: ShellCompDirectiveNoFileComp # This is on stderr\n+```\n+***Important:*** If the noun to complete is empty (when the user has not yet typed any letters of that noun), you must pass an empty parameter to the `__complete` command:\n+```bash\n+$ helm __complete status \"\"<ENTER>\n+harbor\n+notary\n+rook\n+thanos\n+:4\n+Completion ended with directive: ShellCompDirectiveNoFileComp # This is on stderr\n+```\n+Calling the `__complete` command directly allows you to run the Go debugger to troubleshoot your code.  You can also add printouts to your code; Cobra provides the following functions to use for printouts in Go completion code:\n+```go\n+// Prints to the completion script debug file (if BASH_COMP_DEBUG_FILE\n+// is set to a file path) and optionally prints to stderr.\n+cobra.CompDebug(msg string, printToStdErr bool)\n+cobra.CompDebugln(msg string, printToStdErr bool)\n+\n+// Prints to the completion script debug file (if BASH_COMP_DEBUG_FILE\n+// is set to a file path) and to stderr.\n+cobra.CompError(msg string)\n+cobra.CompErrorln(msg string)\n+```\n+***Important:*** You should **not** leave traces that print directly to stdout in your completion code as they will be interpreted as completion choices by the completion script.  Instead, use the cobra-provided debugging traces functions mentioned above.\n+\n+## Completions for flags\n+\n+### Mark flags as required\n+\n+Most of the time completions will only show sub-commands. But if a flag is required to make a sub-command work, you probably want it to show up when the user types [tab][tab].  You can mark a flag as 'Required' like so:\n+\n+```go\n+cmd.MarkFlagRequired(\"pod\")\n+cmd.MarkFlagRequired(\"container\")\n+```\n+\n+and you'll get something like\n+\n+```bash\n+$ kubectl exec [tab][tab]\n+-c            --container=  -p            --pod=\n+```\n+\n+### Specify dynamic flag completion\n+\n+As for nouns, Cobra provides a way of defining dynamic completion of flags.  To provide a Go function that Cobra will execute when it needs the list of completion choices for a flag, you must register the function using the `command.RegisterFlagCompletionFunc()` function.\n+\n+```go\n+flagName := \"output\"\n+cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n+\treturn []cobra.Completion{\"json\", \"table\", \"yaml\"}, cobra.ShellCompDirectiveDefault\n+})\n+```\n+Notice that calling `RegisterFlagCompletionFunc()` is done through the `command` with which the flag is associated.  In our example this dynamic completion will give results like so:\n+\n+```bash\n+$ helm status --output [tab][tab]\n+json table yaml\n+```\n+\n+#### Change the default ShellCompDirective\n+\n+When no completion function is registered for a leaf command or for a flag, Cobra will\n+automatically use `ShellCompDirectiveDefault`, which will invoke the shell's filename completion.\n+This implies that when file completion does not apply to a leaf command or to a flag (the command\n+or flag does not operate on a filename), turning off file completion requires you to register a\n+completion function for that command/flag.\n+For example:\n+\n+```go\n+cmd.RegisterFlagCompletionFunc(\"flag-name\", cobra.NoFileCompletions)\n+```\n+\n+If you find that there are more situations where file completion should be turned off than\n+when it is applicable, you can recursively change the default `ShellCompDirective` for a command\n+and its subcommands to `ShellCompDirectiveNoFileComp`:\n+\n+```go\n+cmd.CompletionOptions.SetDefaultShellCompDirective(ShellCompDirectiveNoFileComp)\n+```\n+\n+If doing so, keep in mind that you should instead register a completion function for leaf commands or\n+flags where file completion is applicable. For example:\n+\n+```go\n+cmd.RegisterFlagCompletionFunc(\"flag-name\", cobra.FixedCompletions(nil, ShellCompDirectiveDefault))\n+```\n+\n+To change the default directive for the entire program, set the DefaultShellCompDirective on the root command.\n+\n+#### Debugging\n+\n+You can also easily debug your Go completion code for flags:\n+```bash\n+$ helm __complete status --output \"\"\n+json\n+table\n+yaml\n+:4\n+Completion ended with directive: ShellCompDirectiveNoFileComp # This is on stderr\n+```\n+***Important:*** You should **not** leave traces that print to stdout in your completion code as they will be interpreted as completion choices by the completion script.  Instead, use the cobra-provided debugging traces functions mentioned further above.\n+\n+### Specify valid filename extensions for flags that take a filename\n+\n+To limit completions of flag values to file names with certain extensions you can either use the different `MarkFlagFilename()` functions or a combination of `RegisterFlagCompletionFunc()` and `ShellCompDirectiveFilterFileExt`, like so:\n+```go\n+flagName := \"output\"\n+cmd.MarkFlagFilename(flagName, \"yaml\", \"json\")\n+```\n+or\n+```go\n+flagName := \"output\"\n+cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n+\treturn []cobra.Completion{\"yaml\", \"json\"}, cobra.ShellCompDirectiveFilterFileExt})\n+```\n+\n+### Limit flag completions to directory names\n+\n+To limit completions of flag values to directory names you can either use the `MarkFlagDirname()` functions or a combination of `RegisterFlagCompletionFunc()` and `ShellCompDirectiveFilterDirs`, like so:\n+```go\n+flagName := \"output\"\n+cmd.MarkFlagDirname(flagName)\n+```\n+or\n+```go\n+flagName := \"output\"\n+cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n+\treturn nil, cobra.ShellCompDirectiveFilterDirs\n+})\n+```\n+To limit completions of flag values to directory names *within another directory* you can use a combination of `RegisterFlagCompletionFunc()` and `ShellCompDirectiveFilterDirs` like so:\n+```go\n+flagName := \"output\"\n+cmd.RegisterFlagCompletionFunc(flagName, func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n+\treturn []cobra.Completion{\"themes\"}, cobra.ShellCompDirectiveFilterDirs\n+})\n+```\n+### Descriptions for completions\n+\n+Cobra provides support for completion descriptions.  Such descriptions are supported for each shell\n+(however, for bash, it is only available in the [completion V2 version](#bash-completion-v2)).\n+For commands and flags, Cobra will provide the descriptions automatically, based on usage information.\n+For example, using zsh:\n+```\n+$ helm s[tab]\n+search  -- search for a keyword in charts\n+show    -- show information of a chart\n+status  -- displays the status of the named release\n+```\n+while using fish:\n+```\n+$ helm s[tab]\n+search  (search for a keyword in charts)  show  (show information of a chart)  status  (displays the status of the named release)\n+```\n+\n+Cobra allows you to add descriptions to your own completions.  Simply add the description text after each completion, following a `\\t` separator. Cobra provides the helper function `CompletionWithDesc(string, string)` to create a completion with a description. This technique applies to completions returned by `ValidArgs`, `ValidArgsFunction` and `RegisterFlagCompletionFunc()`.  For example:\n+```go\n+ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]cobra.Completion, cobra.ShellCompDirective) {\n+\treturn []cobra.Completion{\n+\t\tcobra.CompletionWithDesc(\"harbor\", \"An image registry\"),\n+\t\tcobra.CompletionWithDesc(\"thanos\", \"Long-term metrics\")\n+\t\t}, cobra.ShellCompDirectiveNoFileComp\n+}}\n+```\n+or\n+```go\n+ValidArgs: []cobra.Completion{\n+\tcobra.CompletionWithDesc(\"bash\", \"Completions for bash\"),\n+\tcobra.CompletionWithDesc(\"zsh\", \"Completions for zsh\")\n+\t}\n+```\n+\n+If you don't want to show descriptions in the completions, you can add `--no-descriptions` to the default `completion` command to disable them, like:\n+\n+```bash\n+$ source <(helm completion bash)\n+$ helm completion [tab][tab]\n+bash        (generate autocompletion script for bash)        powershell  (generate autocompletion script for powershell)\n+fish        (generate autocompletion script for fish)        zsh         (generate autocompletion script for zsh)\n+\n+$ source <(helm completion bash --no-descriptions)\n+$ helm completion [tab][tab]\n+bash        fish        powershell  zsh\n+```\n+\n+Setting the `<PROGRAM>_COMPLETION_DESCRIPTIONS` environment variable (falling back to `COBRA_COMPLETION_DESCRIPTIONS` if empty or not set) to a [falsey value](https://pkg.go.dev/strconv#ParseBool) achieves the same. `<PROGRAM>` is the name of your program with all non-ASCII-alphanumeric characters replaced by `_`.\n+\n+## Bash completions\n+\n+### Dependencies\n+\n+The bash completion script generated by Cobra requires the `bash_completion` package. You should update the help text of your completion command to show how to install the `bash_completion` package ([Kubectl docs](https://kubernetes.io/docs/tasks/tools/install-kubectl/#enabling-shell-autocompletion))\n+\n+### Aliases\n+\n+You can also configure `bash` aliases for your program and they will also support completions.\n+\n+```bash\n+alias aliasname=origcommand\n+complete -o default -F __start_origcommand aliasname\n+\n+# and now when you run `aliasname` completion will make\n+# suggestions as it did for `origcommand`.\n+\n+$ aliasname <tab><tab>\n+completion     firstcommand   secondcommand\n+```\n+### Bash legacy dynamic completions\n+\n+For backward compatibility, Cobra still supports its bash legacy dynamic completion solution.\n+Please refer to [Bash Completions](bash.md) for details.\n+\n+### Bash completion V2\n+\n+Cobra provides two versions for bash completion.  The original bash completion (which started it all!) can be used by calling\n+`GenBashCompletion()` or `GenBashCompletionFile()`.\n+\n+A new V2 bash completion version is also available.  This version can be used by calling `GenBashCompletionV2()` or\n+`GenBashCompletionFileV2()`.  The V2 version does **not** support the legacy dynamic completion\n+(see [Bash Completions](bash.md)) but instead works only with the Go dynamic completion\n+solution described in this document.\n+Unless your program already uses the legacy dynamic completion solution, it is recommended that you use the bash\n+completion V2 solution which provides the following extra features:\n+- Supports completion descriptions (like the other shells)\n+- Small completion script of less than 300 lines (v1 generates scripts of thousands of lines; `kubectl` for example has a bash v1 completion script of over 13K lines)\n+- Streamlined user experience thanks to a completion behavior aligned with the other shells\n+\n+`Bash` completion V2 supports descriptions for completions. When calling `GenBashCompletionV2()` or `GenBashCompletionFileV2()`\n+you must provide these functions with a parameter indicating if the completions should be annotated with a description; Cobra\n+will provide the description automatically based on usage information.  You can choose to make this option configurable by\n+your users.\n+\n+```\n+# With descriptions\n+$ helm s[tab][tab]\n+search  (search for a keyword in charts)           status  (display the status of the named release)\n+show    (show information of a chart)\n+\n+# Without descriptions\n+$ helm s[tab][tab]\n+search  show  status\n+```\n+**Note**: Cobra's default `completion` command uses bash completion V2.  If for some reason you need to use bash completion V1, you will need to implement your own `completion` command.\n+## Zsh completions\n+\n+Cobra supports native zsh completion generated from the root `cobra.Command`.\n+The generated completion script should be put somewhere in your `$fpath` and be named\n+`_<yourProgram>`.  You will need to start a new shell for the completions to become available.\n+\n+Zsh supports descriptions for completions. Cobra will provide the description automatically,\n+based on usage information. Cobra provides a way to completely disable such descriptions by\n+using `GenZshCompletionNoDesc()` or `GenZshCompletionFileNoDesc()`. You can choose to make\n+this a configurable option to your users.\n+```\n+# With descriptions\n+$ helm s[tab]\n+search  -- search for a keyword in charts\n+show    -- show information of a chart\n+status  -- displays the status of the named release\n+\n+# Without descriptions\n+$ helm s[tab]\n+search  show  status\n+```\n+*Note*: Because of backward-compatibility requirements, we were forced to have a different API to disable completion descriptions between `zsh` and `fish`.\n+\n+### Limitations\n+\n+* Custom completions implemented in Bash scripting (legacy) are not supported and will be ignored for `zsh` (including the use of the `BashCompCustom` flag annotation).\n+  * You should instead use `ValidArgsFunction` and `RegisterFlagCompletionFunc()` which are portable to the different shells (`bash`, `zsh`, `fish`, `powershell`).\n+* The function `MarkFlagCustom()` is not supported and will be ignored for `zsh`.\n+  * You should instead use `RegisterFlagCompletionFunc()`.\n+\n+### Zsh completions standardization\n+\n+Cobra 1.1 standardized its zsh completion support to align it with its other shell completions.  Although the API was kept backward-compatible, some small changes in behavior were introduced.\n+Please refer to [Zsh Completions](zsh.md) for details.\n+\n+## fish completions\n+\n+Cobra supports native fish completions generated from the root `cobra.Command`.  You can use the `command.GenFishCompletion()` or `command.GenFishCompletionFile()` functions. You must provide these functions with a parameter indicating if the completions should be annotated with a description; Cobra will provide the description automatically based on usage information.  You can choose to make this option configurable by your users.\n+```\n+# With descriptions\n+$ helm s[tab]\n+search  (search for a keyword in charts)  show  (show information of a chart)  status  (displays the status of the named release)\n+\n+# Without descriptions\n+$ helm s[tab]\n+search  show  status\n+```\n+*Note*: Because of backward-compatibility requirements, we were forced to have a different API to disable completion descriptions between `zsh` and `fish`.\n+\n+### Limitations\n+\n+* Custom completions implemented in bash scripting (legacy) are not supported and will be ignored for `fish` (including the use of the `BashCompCustom` flag annotation).\n+  * You should instead use `ValidArgsFunction` and `RegisterFlagCompletionFunc()` which are portable to the different shells (`bash`, `zsh`, `fish`, `powershell`).\n+* The function `MarkFlagCustom()` is not supported and will be ignored for `fish`.\n+  * You should instead use `RegisterFlagCompletionFunc()`.\n+* The following flag completion annotations are not supported and will be ignored for `fish`:\n+  * `BashCompFilenameExt` (filtering by file extension)\n+  * `BashCompSubdirsInDir` (filtering by directory)\n+* The functions corresponding to the above annotations are consequently not supported and will be ignored for `fish`:\n+  * `MarkFlagFilename()` and `MarkPersistentFlagFilename()` (filtering by file extension)\n+  * `MarkFlagDirname()` and `MarkPersistentFlagDirname()` (filtering by directory)\n+* Similarly, the following completion directives are not supported and will be ignored for `fish`:\n+  * `ShellCompDirectiveFilterFileExt` (filtering by file extension)\n+  * `ShellCompDirectiveFilterDirs` (filtering by directory)\n+\n+## PowerShell completions\n+\n+Cobra supports native PowerShell completions generated from the root `cobra.Command`. You can use the `command.GenPowerShellCompletion()` or `command.GenPowerShellCompletionFile()` functions. To include descriptions use `command.GenPowerShellCompletionWithDesc()` and `command.GenPowerShellCompletionFileWithDesc()`. Cobra will provide the description automatically based on usage information. You can choose to make this option configurable by your users.\n+\n+The script is designed to support all three PowerShell completion modes:\n+\n+* TabCompleteNext (default windows style - on each key press the next option is displayed)\n+* Complete (works like bash)\n+* MenuComplete (works like zsh)\n+\n+You set the mode with `Set-PSReadLineKeyHandler -Key Tab -Function <mode>`. Descriptions are only displayed when using the `Complete` or `MenuComplete` mode.\n+\n+Users need PowerShell version 5.0 or above, which comes with Windows 10 and can be downloaded separately for Windows 7 or 8.1. They can then write the completions to a file and source this file from their PowerShell profile, which is referenced by the `$Profile` environment variable. See `Get-Help about_Profiles` for more info about PowerShell profiles.\n+\n+```\n+# With descriptions and Mode 'Complete'\n+$ helm s[tab]\n+search  (search for a keyword in charts)  show  (show information of a chart)  status  (displays the status of the named release)\n+\n+# With descriptions and Mode 'MenuComplete' The description of the current selected value will be displayed below the suggestions.\n+$ helm s[tab]\n+search    show     status\n+\n+search for a keyword in charts\n+\n+# Without descriptions\n+$ helm s[tab]\n+search  show  status\n+```\n+### Aliases\n+\n+You can also configure `powershell` aliases for your program and they will also support completions.\n+\n+```\n+$ sal aliasname origcommand\n+$ Register-ArgumentCompleter -CommandName 'aliasname' -ScriptBlock $__origcommandCompleterBlock\n+\n+# and now when you run `aliasname` completion will make\n+# suggestions as it did for `origcommand`.\n+\n+$ aliasname <tab>\n+completion     firstcommand   secondcommand\n+```\n+The name of the completer block variable is of the form `$__<programName>CompleterBlock` where every `-` and `:` in the program name have been replaced with `_`, to respect powershell naming syntax.\n+\n+### Limitations\n+\n+* Custom completions implemented in bash scripting (legacy) are not supported and will be ignored for `powershell` (including the use of the `BashCompCustom` flag annotation).\n+  * You should instead use `ValidArgsFunction` and `RegisterFlagCompletionFunc()` which are portable to the different shells (`bash`, `zsh`, `fish`, `powershell`).\n+* The function `MarkFlagCustom()` is not supported and will be ignored for `powershell`.\n+  * You should instead use `RegisterFlagCompletionFunc()`.\n+* The following flag completion annotations are not supported and will be ignored for `powershell`:\n+  * `BashCompFilenameExt` (filtering by file extension)\n+  * `BashCompSubdirsInDir` (filtering by directory)\n+* The functions corresponding to the above annotations are consequently not supported and will be ignored for `powershell`:\n+  * `MarkFlagFilename()` and `MarkPersistentFlagFilename()` (filtering by file extension)\n+  * `MarkFlagDirname()` and `MarkPersistentFlagDirname()` (filtering by directory)\n+* Similarly, the following completion directives are not supported and will be ignored for `powershell`:\n+  * `ShellCompDirectiveFilterFileExt` (filtering by file extension)\n+  * `ShellCompDirectiveFilterDirs` (filtering by directory)\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "MNT-002",
+      "filename": "MNT-002.patch",
+      "diff": "Index: site/content/user_guide.md\n===================================================================\n--- site/content/user_guide.md\tbefore\n+++ site/content/user_guide.md\tafter\n@@ -1,887 +1,887 @@\n-# User Guide\r\n-\r\n-While you are welcome to provide your own organization, typically a Cobra-based\r\n-application will follow the following organizational structure:\r\n-\r\n-```console\r\n-▾ appName/\r\n-  ▾ cmd/\r\n-      add.go\r\n-      your.go\r\n-      commands.go\r\n-      here.go\r\n-  main.go\r\n-```\r\n-\r\n-In a Cobra app, typically the main.go file is very bare. It serves one purpose: initializing Cobra.\r\n-\r\n-```go\r\n-package main\r\n-\r\n-import \"{pathToYourApp}/cmd\"\r\n-\r\n-func main() {\r\n-  cmd.Execute()\r\n-}\r\n-```\r\n-\r\n-## Using the Cobra Generator\r\n-\r\n-Cobra-CLI is its own program that will create your application and add any commands you want.\r\n-It's the easiest way to incorporate Cobra into your application.\r\n-\r\n-For complete details on using the Cobra generator, please refer to [The Cobra-CLI Generator README](https://github.com/spf13/cobra-cli/blob/main/README.md)\r\n-\r\n-## Using the Cobra Library\r\n-\r\n-To manually implement Cobra you need to create a bare main.go file and a rootCmd file.\r\n-You will optionally provide additional commands as you see fit.\r\n-\r\n-### Create rootCmd\r\n-\r\n-Cobra doesn't require any special constructors. Simply create your commands.\r\n-\r\n-Ideally you place this in app/cmd/root.go:\r\n-\r\n-```go\r\n-var rootCmd = &cobra.Command{\r\n-  Use:   \"hugo\",\r\n-  Short: \"Hugo is a very fast static site generator\",\r\n-  Long: `A Fast and Flexible Static Site Generator built with\r\n-                love by spf13 and friends in Go.\r\n-                Complete documentation is available at https://gohugo.io/documentation/`,\r\n-  Run: func(cmd *cobra.Command, args []string) {\r\n-    // Do Stuff Here\r\n-  },\r\n-}\r\n-\r\n-func Execute() {\r\n-  if err := rootCmd.Execute(); err != nil {\r\n-    fmt.Fprintln(os.Stderr, err)\r\n-    os.Exit(1)\r\n-  }\r\n-}\r\n-```\r\n-\r\n-You will additionally define flags and handle configuration in your init() function.\r\n-\r\n-For example cmd/root.go:\r\n-\r\n-```go\r\n-package cmd\r\n-\r\n-import (\r\n-\t\"fmt\"\r\n-\t\"os\"\r\n-\r\n-\t\"github.com/spf13/cobra\"\r\n-\t\"github.com/spf13/viper\"\r\n-)\r\n-\r\n-var (\r\n-\t// Used for flags.\r\n-\tcfgFile     string\r\n-\tuserLicense string\r\n-\r\n-\trootCmd = &cobra.Command{\r\n-\t\tUse:   \"cobra-cli\",\r\n-\t\tShort: \"A generator for Cobra based Applications\",\r\n-\t\tLong: `Cobra is a CLI library for Go that empowers applications.\r\n-This application is a tool to generate the needed files\r\n-to quickly create a Cobra application.`,\r\n-\t}\r\n-)\r\n-\r\n-// Execute executes the root command.\r\n-func Execute() error {\r\n-\treturn rootCmd.Execute()\r\n-}\r\n-\r\n-func init() {\r\n-\tcobra.OnInitialize(initConfig)\r\n-\r\n-\trootCmd.PersistentFlags().StringVar(&cfgFile, \"config\", \"\", \"config file (default is $HOME/.cobra.yaml)\")\r\n-\trootCmd.PersistentFlags().StringP(\"author\", \"a\", \"YOUR NAME\", \"author name for copyright attribution\")\r\n-\trootCmd.PersistentFlags().StringVarP(&userLicense, \"license\", \"l\", \"\", \"name of license for the project\")\r\n-\trootCmd.PersistentFlags().Bool(\"viper\", true, \"use Viper for configuration\")\r\n-\tviper.BindPFlag(\"author\", rootCmd.PersistentFlags().Lookup(\"author\"))\r\n-\tviper.BindPFlag(\"useViper\", rootCmd.PersistentFlags().Lookup(\"viper\"))\r\n-\tviper.SetDefault(\"author\", \"NAME HERE <EMAIL ADDRESS>\")\r\n-\tviper.SetDefault(\"license\", \"apache\")\r\n-\r\n-\trootCmd.AddCommand(addCmd)\r\n-\trootCmd.AddCommand(initCmd)\r\n-}\r\n-\r\n-func initConfig() {\r\n-\tif cfgFile != \"\" {\r\n-\t\t// Use config file from the flag.\r\n-\t\tviper.SetConfigFile(cfgFile)\r\n-\t} else {\r\n-\t\t// Find home directory.\r\n-\t\thome, err := os.UserHomeDir()\r\n-\t\tcobra.CheckErr(err)\r\n-\r\n-\t\t// Search config in home directory with name \".cobra\" (without extension).\r\n-\t\tviper.AddConfigPath(home)\r\n-\t\tviper.SetConfigType(\"yaml\")\r\n-\t\tviper.SetConfigName(\".cobra\")\r\n-\t}\r\n-\r\n-\tviper.AutomaticEnv()\r\n-\r\n-\tif err := viper.ReadInConfig(); err == nil {\r\n-\t\tfmt.Println(\"Using config file:\", viper.ConfigFileUsed())\r\n-\t}\r\n-}\r\n-```\r\n-\r\n-### Create your main.go\r\n-\r\n-With the root command you need to have your main function execute it.\r\n-Execute should be run on the root for clarity, though it can be called on any command.\r\n-\r\n-In a Cobra app, typically the main.go file is very bare. It serves one purpose: to initialize Cobra.\r\n-\r\n-```go\r\n-package main\r\n-\r\n-import \"{pathToYourApp}/cmd\"\r\n-\r\n-func main() {\r\n-  cmd.Execute()\r\n-}\r\n-```\r\n-\r\n-### Create additional commands\r\n-\r\n-Additional commands can be defined and typically are each given their own file\r\n-inside of the cmd/ directory.\r\n-\r\n-If you wanted to create a version command you would create cmd/version.go and\r\n-populate it with the following:\r\n-\r\n-```go\r\n-package cmd\r\n-\r\n-import (\r\n-  \"fmt\"\r\n-\r\n-  \"github.com/spf13/cobra\"\r\n-)\r\n-\r\n-func init() {\r\n-  rootCmd.AddCommand(versionCmd)\r\n-}\r\n-\r\n-var versionCmd = &cobra.Command{\r\n-  Use:   \"version\",\r\n-  Short: \"Print the version number of Hugo\",\r\n-  Long:  `All software has versions. This is Hugo's`,\r\n-  Run: func(cmd *cobra.Command, args []string) {\r\n-    fmt.Println(\"Hugo Static Site Generator v0.9 -- HEAD\")\r\n-  },\r\n-}\r\n-```\r\n-\r\n-### Organizing subcommands\r\n-\r\n-A command may have subcommands which in turn may have other subcommands. This is achieved by using\r\n-`AddCommand`. In some cases, especially in larger applications, each subcommand may be defined in\r\n-its own go package.\r\n-\r\n-The suggested approach is for the parent command to use `AddCommand` to add its most immediate\r\n-subcommands. For example, consider the following directory structure:\r\n-\r\n-```console\r\n-├── cmd\r\n-│   ├── root.go\r\n-│   └── sub1\r\n-│       ├── sub1.go\r\n-│       └── sub2\r\n-│           ├── leafA.go\r\n-│           ├── leafB.go\r\n-│           └── sub2.go\r\n-└── main.go\r\n-```\r\n-\r\n-In this case:\r\n-\r\n-* The `init` function of `root.go` adds the command defined in `sub1.go` to the root command.\r\n-* The `init` function of `sub1.go` adds the command defined in `sub2.go` to the sub1 command.\r\n-* The `init` function of `sub2.go` adds the commands defined in `leafA.go` and `leafB.go` to the\r\n-  sub2 command.\r\n-\r\n-This approach ensures the subcommands are always included at compile time while avoiding cyclic\r\n-references.\r\n-\r\n-### Returning and handling errors\r\n-\r\n-If you wish to return an error to the caller of a command, `RunE` can be used.\r\n-\r\n-```go\r\n-package cmd\r\n-\r\n-import (\r\n-  \"fmt\"\r\n-\r\n-  \"github.com/spf13/cobra\"\r\n-)\r\n-\r\n-func init() {\r\n-  rootCmd.AddCommand(tryCmd)\r\n-}\r\n-\r\n-var tryCmd = &cobra.Command{\r\n-  Use:   \"try\",\r\n-  Short: \"Try and possibly fail at something\",\r\n-  RunE: func(cmd *cobra.Command, args []string) error {\r\n-    if err := someFunc(); err != nil {\r\n-\treturn err\r\n-    }\r\n-    return nil\r\n-  },\r\n-}\r\n-```\r\n-\r\n-The error can then be caught at the execute function call.\r\n-\r\n-## Working with Flags\r\n-\r\n-Flags provide modifiers to control how the action command operates.\r\n-\r\n-### Assign flags to a command\r\n-\r\n-Since the flags are defined and used in different locations, we need to\r\n-define a variable outside with the correct scope to assign the flag to\r\n-work with.\r\n-\r\n-```go\r\n-var Verbose bool\r\n-var Source string\r\n-```\r\n-\r\n-There are two different approaches to assign a flag.\r\n-\r\n-### Persistent Flags\r\n-\r\n-A flag can be 'persistent', meaning that this flag will be available to the\r\n-command it's assigned to as well as every command under that command. For\r\n-global flags, assign a flag as a persistent flag on the root.\r\n-\r\n-```go\r\n-rootCmd.PersistentFlags().BoolVarP(&Verbose, \"verbose\", \"v\", false, \"verbose output\")\r\n-```\r\n-\r\n-### Local Flags\r\n-\r\n-A flag can also be assigned locally, which will only apply to that specific command.\r\n-\r\n-```go\r\n-localCmd.Flags().StringVarP(&Source, \"source\", \"s\", \"\", \"Source directory to read from\")\r\n-```\r\n-\r\n-### Local Flag on Parent Commands\r\n-\r\n-By default, Cobra only parses local flags on the target command, and any local flags on\r\n-parent commands are ignored. By enabling `Command.TraverseChildren`, Cobra will\r\n-parse local flags on each command before executing the target command.\r\n-\r\n-```go\r\n-command := cobra.Command{\r\n-  Use: \"print [OPTIONS] [COMMANDS]\",\r\n-  TraverseChildren: true,\r\n-}\r\n-```\r\n-\r\n-### Bind Flags with Config\r\n-\r\n-You can also bind your flags with [viper](https://github.com/spf13/viper):\r\n-\r\n-```go\r\n-var author string\r\n-\r\n-func init() {\r\n-  rootCmd.PersistentFlags().StringVar(&author, \"author\", \"YOUR NAME\", \"Author name for copyright attribution\")\r\n-  viper.BindPFlag(\"author\", rootCmd.PersistentFlags().Lookup(\"author\"))\r\n-}\r\n-```\r\n-\r\n-In this example, the persistent flag `author` is bound with `viper`.\r\n-**Note**: the variable `author` will not be set to the value from config,\r\n-when the `--author` flag is provided by user.\r\n-\r\n-More in [viper documentation](https://github.com/spf13/viper#working-with-flags).\r\n-\r\n-### Required flags\r\n-\r\n-Flags are optional by default. If instead you wish your command to report an error\r\n-when a flag has not been set, mark it as required:\r\n-\r\n-```go\r\n-rootCmd.Flags().StringVarP(&Region, \"region\", \"r\", \"\", \"AWS region (required)\")\r\n-rootCmd.MarkFlagRequired(\"region\")\r\n-```\r\n-\r\n-Or, for persistent flags:\r\n-\r\n-```go\r\n-rootCmd.PersistentFlags().StringVarP(&Region, \"region\", \"r\", \"\", \"AWS region (required)\")\r\n-rootCmd.MarkPersistentFlagRequired(\"region\")\r\n-```\r\n-\r\n-### Flag Groups\r\n-\r\n-If you have different flags that must be provided together (e.g. if they provide the `--username` flag they MUST provide the `--password` flag as well) then\r\n-Cobra can enforce that requirement:\r\n-\r\n-```go\r\n-rootCmd.Flags().StringVarP(&u, \"username\", \"u\", \"\", \"Username (required if password is set)\")\r\n-rootCmd.Flags().StringVarP(&pw, \"password\", \"p\", \"\", \"Password (required if username is set)\")\r\n-rootCmd.MarkFlagsRequiredTogether(\"username\", \"password\")\r\n-```\r\n-\r\n-You can also prevent different flags from being provided together if they represent mutually\r\n-exclusive options such as specifying an output format as either `--json` or `--yaml` but never both:\r\n-\r\n-```go\r\n-rootCmd.Flags().BoolVar(&ofJson, \"json\", false, \"Output in JSON\")\r\n-rootCmd.Flags().BoolVar(&ofYaml, \"yaml\", false, \"Output in YAML\")\r\n-rootCmd.MarkFlagsMutuallyExclusive(\"json\", \"yaml\")\r\n-```\r\n-\r\n-If you want to require at least one flag from a group to be present, you can use `MarkFlagsOneRequired`.\r\n-This can be combined with `MarkFlagsMutuallyExclusive` to enforce exactly one flag from a given group:\r\n-\r\n-```go\r\n-rootCmd.Flags().BoolVar(&ofJson, \"json\", false, \"Output in JSON\")\r\n-rootCmd.Flags().BoolVar(&ofYaml, \"yaml\", false, \"Output in YAML\")\r\n-rootCmd.MarkFlagsOneRequired(\"json\", \"yaml\")\r\n-rootCmd.MarkFlagsMutuallyExclusive(\"json\", \"yaml\")\r\n-```\r\n-\r\n-In these cases:\r\n-  - both local and persistent flags can be used\r\n-    - **NOTE:** the group is only enforced on commands where every flag is defined\r\n-  - a flag may appear in multiple groups\r\n-  - a group may contain any number of flags\r\n-\r\n-### Repeated Flags\r\n-\r\n-Cobra supports two types of repeated flags, useful for implementing SSH-like verbose flags (`-v`, `-vv`, `-vvv`) or collecting multiple values.\r\n-\r\n-#### Count Flags\r\n-\r\n-For implementing verbose-style flags where repeated usage increases a counter (like SSH's `-v`, `-vv`, `-vvv`):\r\n-\r\n-```go\r\n-var verbose int\r\n-\r\n-func init() {\r\n-  // CountVarP allows the flag to be repeated to increment the counter\r\n-  rootCmd.PersistentFlags().CountVarP(&verbose, \"verbose\", \"v\", \"verbose output (can be repeated: -v, -vv, -vvv)\")\r\n-}\r\n-```\r\n-\r\n-Usage examples:\r\n-- `myapp -v` → verbose = 1 (info level)\r\n-- `myapp -vv` or `myapp -v -v` → verbose = 2 (debug level)\r\n-- `myapp -vvv` or `myapp -v -v -v` → verbose = 3 (trace level)\r\n-\r\n-Then in your command logic:\r\n-```go\r\n-Run: func(cmd *cobra.Command, args []string) {\r\n-  switch verbose {\r\n-  case 0:\r\n-    // Default: no verbose output\r\n-  case 1:\r\n-    // Info level logging\r\n-    log.SetLevel(log.InfoLevel)\r\n-  case 2:\r\n-    // Debug level logging\r\n-    log.SetLevel(log.DebugLevel)\r\n-  case 3:\r\n-    // Trace level logging\r\n-    log.SetLevel(log.TraceLevel)\r\n-  default:\r\n-    // Maximum verbosity\r\n-    log.SetLevel(log.TraceLevel)\r\n-  }\r\n-},\r\n-```\r\n-\r\n-#### Array/Slice Flags\r\n-\r\n-For collecting multiple values of the same flag:\r\n-\r\n-```go\r\n-var inputFiles []string\r\n-\r\n-func init() {\r\n-  // StringArrayVarP allows multiple values: --input file1.txt --input file2.txt\r\n-  rootCmd.Flags().StringArrayVarP(&inputFiles, \"input\", \"i\", []string{}, \"input files (can be repeated)\")\r\n-\r\n-  // Alternative: StringSliceVarP for comma-separated values\r\n-  // rootCmd.Flags().StringSliceVarP(&inputFiles, \"input\", \"i\", []string{}, \"input files (comma-separated or repeated)\")\r\n-}\r\n-```\r\n-\r\n-Usage examples:\r\n-- `myapp --input file1.txt --input file2.txt`\r\n-- `myapp -i file1.txt -i file2.txt`\r\n-- With StringSlice: `myapp --input file1.txt,file2.txt,file3.txt`\r\n-\r\n-**Note**: Both `CountVar` and array flags leverage the underlying [pflag](https://github.com/spf13/pflag) library's support for repeated flags.\r\n-\r\n-## Positional and Custom Arguments\r\n-\r\n-Validation of positional arguments can be specified using the `Args` field of `Command`.\r\n-The following validators are built in:\r\n-\r\n-- Number of arguments:\r\n-  - `NoArgs` - report an error if there are any positional args.\r\n-  - `ArbitraryArgs` - accept any number of args.\r\n-  - `MinimumNArgs(int)` - report an error if less than N positional args are provided.\r\n-  - `MaximumNArgs(int)` - report an error if more than N positional args are provided.\r\n-  - `ExactArgs(int)` - report an error if there are not exactly N positional args.\r\n-  - `RangeArgs(min, max)` - report an error if the number of args is not between `min` and `max`.\r\n-- Content of the arguments:\r\n-  - `OnlyValidArgs` - report an error if there are any positional args not specified in the `ValidArgs` field of `Command`, which can optionally be set to a list of valid values for positional args.\r\n-  - `NoDuplicateArgs` - report an error if any positional argument value is provided more than once.\r\n-\r\n-If `Args` is undefined or `nil`, it defaults to `ArbitraryArgs`.\r\n-\r\n-Moreover, `MatchAll(pargs ...PositionalArgs)` enables combining existing checks with arbitrary other checks.\r\n-For instance, if you want to report an error if there are not exactly N positional args OR if there are any positional\r\n-args that are not in the `ValidArgs` field of `Command`, you can call `MatchAll` on `ExactArgs` and `OnlyValidArgs`, as\r\n-shown below:\r\n-\r\n-```go\r\n-var cmd = &cobra.Command{\r\n-  Short: \"hello\",\r\n-  Args: cobra.MatchAll(cobra.ExactArgs(2), cobra.OnlyValidArgs),\r\n-  Run: func(cmd *cobra.Command, args []string) {\r\n-    fmt.Println(\"Hello, World!\")\r\n-  },\r\n-}\r\n-```\r\n-\r\n-It is possible to set any custom validator that satisfies `func(cmd *cobra.Command, args []string) error`.\r\n-For example:\r\n-\r\n-```go\r\n-var cmd = &cobra.Command{\r\n-  Short: \"hello\",\r\n-  Args: func(cmd *cobra.Command, args []string) error {\r\n-    // Optionally run one of the validators provided by cobra\r\n-    if err := cobra.MinimumNArgs(1)(cmd, args); err != nil {\r\n-        return err\r\n-    }\r\n-    // Run the custom validation logic\r\n-    if myapp.IsValidColor(args[0]) {\r\n-      return nil\r\n-    }\r\n-    return fmt.Errorf(\"invalid color specified: %s\", args[0])\r\n-  },\r\n-  Run: func(cmd *cobra.Command, args []string) {\r\n-    fmt.Println(\"Hello, World!\")\r\n-  },\r\n-}\r\n-```\r\n-\r\n-## Example\r\n-\r\n-In the example below, we have defined three commands. Two are at the top level\r\n-and one (cmdTimes) is a child of one of the top commands. In this case the root\r\n-is not executable, meaning that a subcommand is required. This is accomplished\r\n-by not providing a 'Run' for the 'rootCmd'.\r\n-\r\n-We have only defined one flag for a single command.\r\n-\r\n-More documentation about flags is available at https://github.com/spf13/pflag.\r\n-\r\n-```go\r\n-package main\r\n-\r\n-import (\r\n-  \"fmt\"\r\n-  \"strings\"\r\n-\r\n-  \"github.com/spf13/cobra\"\r\n-)\r\n-\r\n-func main() {\r\n-  var echoTimes int\r\n-\r\n-  var cmdPrint = &cobra.Command{\r\n-    Use:   \"print [string to print]\",\r\n-    Short: \"Print anything to the screen\",\r\n-    Long: `print is for printing anything back to the screen.\r\n-For many years people have printed back to the screen.`,\r\n-    Args: cobra.MinimumNArgs(1),\r\n-    Run: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Println(\"Print: \" + strings.Join(args, \" \"))\r\n-    },\r\n-  }\r\n-\r\n-  var cmdEcho = &cobra.Command{\r\n-    Use:   \"echo [string to echo]\",\r\n-    Short: \"Echo anything to the screen\",\r\n-    Long: `echo is for echoing anything back.\r\n-Echo works a lot like print, except it has a child command.`,\r\n-    Args: cobra.MinimumNArgs(1),\r\n-    Run: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Println(\"Echo: \" + strings.Join(args, \" \"))\r\n-    },\r\n-  }\r\n-\r\n-  var cmdTimes = &cobra.Command{\r\n-    Use:   \"times [string to echo]\",\r\n-    Short: \"Echo anything to the screen more times\",\r\n-    Long: `echo things multiple times back to the user by providing\r\n-a count and a string.`,\r\n-    Args: cobra.MinimumNArgs(1),\r\n-    Run: func(cmd *cobra.Command, args []string) {\r\n-      for i := 0; i < echoTimes; i++ {\r\n-        fmt.Println(\"Echo: \" + strings.Join(args, \" \"))\r\n-      }\r\n-    },\r\n-  }\r\n-\r\n-  cmdTimes.Flags().IntVarP(&echoTimes, \"times\", \"t\", 1, \"times to echo the input\")\r\n-\r\n-  var rootCmd = &cobra.Command{Use: \"app\"}\r\n-  rootCmd.AddCommand(cmdPrint, cmdEcho)\r\n-  cmdEcho.AddCommand(cmdTimes)\r\n-  rootCmd.Execute()\r\n-}\r\n-```\r\n-\r\n-For a more complete example of a larger application, please checkout [Hugo](https://gohugo.io/).\r\n-\r\n-## Help Command\r\n-\r\n-Cobra automatically adds a help command to your application when you have subcommands.\r\n-This will be called when a user runs 'app help'. Additionally, help will also\r\n-support all other commands as input. Say, for instance, you have a command called\r\n-'create' without any additional configuration; Cobra will work when 'app help\r\n-create' is called.  Every command will automatically have the '--help' flag added.\r\n-\r\n-### Example\r\n-\r\n-The following output is automatically generated by Cobra. Nothing beyond the\r\n-command and flag definitions are needed.\r\n-\r\n-```console\r\n-$ cobra-cli help\r\n-\r\n-Cobra is a CLI library for Go that empowers applications.\r\n-This application is a tool to generate the needed files\r\n-to quickly create a Cobra application.\r\n-\r\n-Usage:\r\n-  cobra-cli [command]\r\n-\r\n-Available Commands:\r\n-  add         Add a command to a Cobra Application\r\n-  completion  Generate the autocompletion script for the specified shell\r\n-  help        Help about any command\r\n-  init        Initialize a Cobra Application\r\n-\r\n-Flags:\r\n-  -a, --author string    author name for copyright attribution (default \"YOUR NAME\")\r\n-      --config string    config file (default is $HOME/.cobra.yaml)\r\n-  -h, --help             help for cobra-cli\r\n-  -l, --license string   name of license for the project\r\n-      --viper            use Viper for configuration\r\n-\r\n-Use \"cobra-cli [command] --help\" for more information about a command.\r\n-```\r\n-\r\n-Help is just a command like any other. There is no special logic or behavior\r\n-around it. In fact, you can provide your own if you want.\r\n-\r\n-### Grouping commands in help\r\n-\r\n-Cobra supports grouping of available commands in the help output.  To group commands, each group must be explicitly\r\n-defined using `AddGroup()` on the parent command.  Then a subcommand can be added to a group using the `GroupID` element\r\n-of that subcommand. The groups will appear in the help output in the same order as they are defined using different\r\n-calls to `AddGroup()`.  If you use the generated `help` or `completion` commands, you can set their group ids using\r\n-`SetHelpCommandGroupId()` and `SetCompletionCommandGroupId()` on the root command, respectively.\r\n-\r\n-### Defining your own help\r\n-\r\n-You can provide your own Help command or your own template for the default command to use\r\n-with the following functions:\r\n-\r\n-```go\r\n-cmd.SetHelpCommand(cmd *Command)\r\n-cmd.SetHelpFunc(f func(*Command, []string))\r\n-cmd.SetHelpTemplate(s string)\r\n-```\r\n-\r\n-The latter two will also apply to any children commands.\r\n-\r\n-Note that templates specified with `SetHelpTemplate` are evaluated using\r\n-`text/template` which can increase the size of the compiled executable.\r\n-\r\n-## Usage Message\r\n-\r\n-When the user provides an invalid flag or invalid command, Cobra responds by\r\n-showing the user the 'usage'.\r\n-\r\n-### Example\r\n-You may recognize this from the help above. That's because the default help\r\n-embeds the usage as part of its output.\r\n-\r\n-```console\r\n-$ cobra-cli --invalid\r\n-Error: unknown flag: --invalid\r\n-Usage:\r\n-  cobra-cli [command]\r\n-\r\n-Available Commands:\r\n-  add         Add a command to a Cobra Application\r\n-  completion  Generate the autocompletion script for the specified shell\r\n-  help        Help about any command\r\n-  init        Initialize a Cobra Application\r\n-\r\n-Flags:\r\n-  -a, --author string    author name for copyright attribution (default \"YOUR NAME\")\r\n-      --config string    config file (default is $HOME/.cobra.yaml)\r\n-  -h, --help             help for cobra-cli\r\n-  -l, --license string   name of license for the project\r\n-      --viper            use Viper for configuration\r\n-\r\n-Use \"cobra [command] --help\" for more information about a command.\r\n-```\r\n-\r\n-### Defining your own usage\r\n-\r\n-You can provide your own usage function or template for Cobra to use.\r\n-Like help, the function and template are overridable through public methods:\r\n-\r\n-```go\r\n-cmd.SetUsageFunc(f func(*Command) error)\r\n-cmd.SetUsageTemplate(s string)\r\n-```\r\n-\r\n-Note that templates specified with `SetUsageTemplate` are evaluated using\r\n-`text/template` which can increase the size of the compiled executable.\r\n-\r\n-## Version Flag\r\n-\r\n-Cobra adds a top-level '--version' flag if the Version field is set on the root command.\r\n-Running an application with the '--version' flag will print the version to stdout using\r\n-the version template. The template can be customized using the\r\n-`cmd.SetVersionTemplate(s string)` function.\r\n-\r\n-Note that templates specified with `SetVersionTemplate` are evaluated using\r\n-`text/template` which can increase the size of the compiled executable.\r\n-\r\n-## Error Message Prefix\r\n-\r\n-Cobra prints an error message when receiving a non-nil error value.\r\n-The default error message is `Error: <error contents>`.\r\n-The Prefix, `Error:` can be customized using the `cmd.SetErrPrefix(s string)` function.\r\n-\r\n-## PreRun and PostRun Hooks\r\n-\r\n-It is possible to run functions before or after the main `Run` function of your command. The `PersistentPreRun` and `PreRun` functions will be executed before `Run`. `PersistentPostRun` and `PostRun` will be executed after `Run`.  The `Persistent*Run` functions will be inherited by children if they do not declare their own.  The `*PreRun` and `*PostRun` functions will only be executed if the `Run` function of the current command has been declared.  These functions are run in the following order:\r\n-\r\n-- `PersistentPreRun`\r\n-- `PreRun`\r\n-- `Run`\r\n-- `PostRun`\r\n-- `PersistentPostRun`\r\n-\r\n-An example of two commands which use all of these features is below.  When the subcommand is executed, it will run the root command's `PersistentPreRun` but not the root command's `PersistentPostRun`:\r\n-\r\n-```go\r\n-package main\r\n-\r\n-import (\r\n-  \"fmt\"\r\n-\r\n-  \"github.com/spf13/cobra\"\r\n-)\r\n-\r\n-func main() {\r\n-\r\n-  var rootCmd = &cobra.Command{\r\n-    Use:   \"root [sub]\",\r\n-    Short: \"My root command\",\r\n-    PersistentPreRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside rootCmd PersistentPreRun with args: %v\\n\", args)\r\n-    },\r\n-    PreRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside rootCmd PreRun with args: %v\\n\", args)\r\n-    },\r\n-    Run: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside rootCmd Run with args: %v\\n\", args)\r\n-    },\r\n-    PostRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside rootCmd PostRun with args: %v\\n\", args)\r\n-    },\r\n-    PersistentPostRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside rootCmd PersistentPostRun with args: %v\\n\", args)\r\n-    },\r\n-  }\r\n-\r\n-  var subCmd = &cobra.Command{\r\n-    Use:   \"sub [no options!]\",\r\n-    Short: \"My subcommand\",\r\n-    PreRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside subCmd PreRun with args: %v\\n\", args)\r\n-    },\r\n-    Run: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside subCmd Run with args: %v\\n\", args)\r\n-    },\r\n-    PostRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside subCmd PostRun with args: %v\\n\", args)\r\n-    },\r\n-    PersistentPostRun: func(cmd *cobra.Command, args []string) {\r\n-      fmt.Printf(\"Inside subCmd PersistentPostRun with args: %v\\n\", args)\r\n-    },\r\n-  }\r\n-\r\n-  rootCmd.AddCommand(subCmd)\r\n-\r\n-  rootCmd.SetArgs([]string{\"\"})\r\n-  rootCmd.Execute()\r\n-  fmt.Println()\r\n-  rootCmd.SetArgs([]string{\"sub\", \"arg1\", \"arg2\"})\r\n-  rootCmd.Execute()\r\n-}\r\n-```\r\n-\r\n-Output:\r\n-```\r\n-Inside rootCmd PersistentPreRun with args: []\r\n-Inside rootCmd PreRun with args: []\r\n-Inside rootCmd Run with args: []\r\n-Inside rootCmd PostRun with args: []\r\n-Inside rootCmd PersistentPostRun with args: []\r\n-\r\n-Inside rootCmd PersistentPreRun with args: [arg1 arg2]\r\n-Inside subCmd PreRun with args: [arg1 arg2]\r\n-Inside subCmd Run with args: [arg1 arg2]\r\n-Inside subCmd PostRun with args: [arg1 arg2]\r\n-Inside subCmd PersistentPostRun with args: [arg1 arg2]\r\n-```\r\n-\r\n-By default, only the first persistent hook found in the command chain is executed.\r\n-That is why in the above output, the `rootCmd PersistentPostRun` was not called for a child command.\r\n-Set `EnableTraverseRunHooks` global variable to `true` if you want to execute all parents' persistent hooks.\r\n-\r\n-## Suggestions when \"unknown command\" happens\r\n-\r\n-Cobra will print automatic suggestions when \"unknown command\" errors happen. This allows Cobra to behave similarly to the `git` command when a typo happens. For example:\r\n-\r\n-```console\r\n-$ hugo srever\r\n-Error: unknown command \"srever\" for \"hugo\"\r\n-\r\n-Did you mean this?\r\n-        server\r\n-\r\n-Run 'hugo --help' for usage.\r\n-```\r\n-\r\n-Suggestions are automatically generated based on existing subcommands and use an implementation of [Levenshtein distance](https://en.wikipedia.org/wiki/Levenshtein_distance). Every registered command that matches a minimum distance of 2 (ignoring case) will be displayed as a suggestion.\r\n-\r\n-If you need to disable suggestions or tweak the string distance in your command, use:\r\n-\r\n-```go\r\n-command.DisableSuggestions = true\r\n-```\r\n-\r\n-or\r\n-\r\n-```go\r\n-command.SuggestionsMinimumDistance = 1\r\n-```\r\n-\r\n-You can also explicitly set names for which a given command will be suggested using the `SuggestFor` attribute. This allows suggestions for strings that are not close in terms of string distance, but make sense in your set of commands but for which\r\n-you don't want aliases. Example:\r\n-\r\n-```console\r\n-$ kubectl remove\r\n-Error: unknown command \"remove\" for \"kubectl\"\r\n-\r\n-Did you mean this?\r\n-        delete\r\n-\r\n-Run 'kubectl help' for usage.\r\n-```\r\n-\r\n-## Generating documentation for your command\r\n-\r\n-Cobra can generate documentation based on subcommands, flags, etc.\r\n-Read more about it in the [docs generation documentation](docgen/_index.md).\r\n-\r\n-## Generating shell completions\r\n-\r\n-Cobra can generate a shell-completion file for the following shells: bash, zsh, fish, PowerShell.\r\n-If you add more information to your commands, these completions can be amazingly powerful and flexible.\r\n-Read more about it in [Shell Completions](completions/_index.md).\r\n-\r\n-## Providing Active Help\r\n-\r\n-Cobra makes use of the shell-completion system to define a framework allowing you to provide Active Help to your users.\r\n-Active Help are messages (hints, warnings, etc) printed as the program is being used.\r\n-Read more about it in [Active Help](active_help.md).\r\n-\r\n-## Creating a plugin\r\n-\r\n-When creating a plugin for tools like *kubectl*, the executable is named\r\n-`kubectl-myplugin`, but it is used as `kubectl myplugin`. To fix help\r\n-messages and completions, annotate the root command with the\r\n-`cobra.CommandDisplayNameAnnotation` annotation.\r\n-\r\n-### Example kubectl plugin\r\n-\r\n-```go\r\n-package main\r\n-\r\n-import (\r\n-\t\"fmt\"\r\n-\r\n-\t\"github.com/spf13/cobra\"\r\n-)\r\n-\r\n-func main() {\r\n-\trootCmd := &cobra.Command{\r\n-\t\tUse: \"kubectl-myplugin\",\r\n-\t\tAnnotations: map[string]string{\r\n-\t\t\tcobra.CommandDisplayNameAnnotation: \"kubectl myplugin\",\r\n-\t\t},\r\n-\t}\r\n-\tsubCmd := &cobra.Command{\r\n-\t\tUse: \"subcmd\",\r\n-\t\tRun: func(cmd *cobra.Command, args []string) {\r\n-\t\t\tfmt.Println(\"kubectl myplugin subcmd\")\r\n-\t\t},\r\n-\t}\r\n-\trootCmd.AddCommand(subCmd)\r\n-\trootCmd.Execute()\r\n-}\r\n-```\r\n-\r\n-Example run as a kubectl plugin:\r\n-\r\n-```console\r\n-$ kubectl myplugin\r\n-Usage:\r\n-  kubectl myplugin [command]\r\n-\r\n-Available Commands:\r\n-  completion  Generate the autocompletion script for the specified shell\r\n-  help        Help about any command\r\n-  subcmd\r\n-\r\n-Flags:\r\n-  -h, --help   help for kubectl myplugin\r\n-\r\n-Use \"kubectl myplugin [command] --help\" for more information about a command.\r\n-```\r\n+# User Guide\n+\n+While you are welcome to provide your own organization, typically a Cobra-based\n+application will follow the following organizational structure:\n+\n+```console\n+▾ appName/\n+  ▾ cmd/\n+      add.go\n+      your.go\n+      commands.go\n+      here.go\n+  main.go\n+```\n+\n+In a Cobra app, typically the main.go file is very bare. It serves one purpose: initializing Cobra.\n+\n+```go\n+package main\n+\n+import \"{pathToYourApp}/cmd\"\n+\n+func main() {\n+  cmd.Execute()\n+}\n+```\n+\n+## Using the Cobra Generator\n+\n+Cobra-CLI is its own program that will create your application and add any commands you want.\n+It's the easiest way to incorporate Cobra into your application.\n+\n+For complete details on using the Cobra generator, please refer to [The Cobra-CLI Generator README](https://github.com/spf13/cobra-cli/blob/main/README.md)\n+\n+## Using the Cobra Library\n+\n+To manually implement Cobra you need to create a bare main.go file and a rootCmd file.\n+You will optionally provide additional commands as you see fit.\n+\n+### Create rootCmd\n+\n+Cobra doesn't require any special constructors. Simply create your commands.\n+\n+Ideally you place this in app/cmd/root.go:\n+\n+```go\n+var rootCmd = &cobra.Command{\n+  Use:   \"myapp\",\n+  Short: \"MyApp is a fast and flexible application\",\n+  Long: `A fast and flexible application built with\n+                love in Go.\n+                Complete documentation is available at https://example.com/docs/`,\n+  Run: func(cmd *cobra.Command, args []string) {\n+    // Do Stuff Here\n+  },\n+}\n+\n+func Execute() {\n+  if err := rootCmd.Execute(); err != nil {\n+    fmt.Fprintln(os.Stderr, err)\n+    os.Exit(1)\n+  }\n+}\n+```\n+\n+You will additionally define flags and handle configuration in your init() function.\n+\n+For example cmd/root.go:\n+\n+```go\n+package cmd\n+\n+import (\n+\t\"fmt\"\n+\t\"os\"\n+\n+\t\"github.com/spf13/cobra\"\n+\t\"github.com/spf13/viper\"\n+)\n+\n+var (\n+\t// Used for flags.\n+\tcfgFile     string\n+\tuserLicense string\n+\n+\trootCmd = &cobra.Command{\n+\t\tUse:   \"cobra-cli\",\n+\t\tShort: \"A generator for Cobra based Applications\",\n+\t\tLong: `Cobra is a CLI library for Go that empowers applications.\n+This application is a tool to generate the needed files\n+to quickly create a Cobra application.`,\n+\t}\n+)\n+\n+// Execute executes the root command.\n+func Execute() error {\n+\treturn rootCmd.Execute()\n+}\n+\n+func init() {\n+\tcobra.OnInitialize(initConfig)\n+\n+\trootCmd.PersistentFlags().StringVar(&cfgFile, \"config\", \"\", \"config file (default is $HOME/.cobra.yaml)\")\n+\trootCmd.PersistentFlags().StringP(\"author\", \"a\", \"YOUR NAME\", \"author name for copyright attribution\")\n+\trootCmd.PersistentFlags().StringVarP(&userLicense, \"license\", \"l\", \"\", \"name of license for the project\")\n+\trootCmd.PersistentFlags().Bool(\"viper\", true, \"use Viper for configuration\")\n+\tviper.BindPFlag(\"author\", rootCmd.PersistentFlags().Lookup(\"author\"))\n+\tviper.BindPFlag(\"useViper\", rootCmd.PersistentFlags().Lookup(\"viper\"))\n+\tviper.SetDefault(\"author\", \"NAME HERE <EMAIL ADDRESS>\")\n+\tviper.SetDefault(\"license\", \"apache\")\n+\n+\trootCmd.AddCommand(addCmd)\n+\trootCmd.AddCommand(initCmd)\n+}\n+\n+func initConfig() {\n+\tif cfgFile != \"\" {\n+\t\t// Use config file from the flag.\n+\t\tviper.SetConfigFile(cfgFile)\n+\t} else {\n+\t\t// Find home directory.\n+\t\thome, err := os.UserHomeDir()\n+\t\tcobra.CheckErr(err)\n+\n+\t\t// Search config in home directory with name \".cobra\" (without extension).\n+\t\tviper.AddConfigPath(home)\n+\t\tviper.SetConfigType(\"yaml\")\n+\t\tviper.SetConfigName(\".cobra\")\n+\t}\n+\n+\tviper.AutomaticEnv()\n+\n+\tif err := viper.ReadInConfig(); err == nil {\n+\t\tfmt.Println(\"Using config file:\", viper.ConfigFileUsed())\n+\t}\n+}\n+```\n+\n+### Create your main.go\n+\n+With the root command you need to have your main function execute it.\n+Execute should be run on the root for clarity, though it can be called on any command.\n+\n+In a Cobra app, typically the main.go file is very bare. It serves one purpose: to initialize Cobra.\n+\n+```go\n+package main\n+\n+import \"{pathToYourApp}/cmd\"\n+\n+func main() {\n+  cmd.Execute()\n+}\n+```\n+\n+### Create additional commands\n+\n+Additional commands can be defined and typically are each given their own file\n+inside of the cmd/ directory.\n+\n+If you wanted to create a version command you would create cmd/version.go and\n+populate it with the following:\n+\n+```go\n+package cmd\n+\n+import (\n+  \"fmt\"\n+\n+  \"github.com/spf13/cobra\"\n+)\n+\n+func init() {\n+  rootCmd.AddCommand(versionCmd)\n+}\n+\n+var versionCmd = &cobra.Command{\n+  Use:   \"version\",\n+  Short: \"Print the version number of MyApp\",\n+  Long:  `All software has versions. This is MyApp's.`,\n+  Run: func(cmd *cobra.Command, args []string) {\n+    fmt.Println(\"MyApp v1.0.0\")\n+  },\n+}\n+```\n+\n+### Organizing subcommands\n+\n+A command may have subcommands which in turn may have other subcommands. This is achieved by using\n+`AddCommand`. In some cases, especially in larger applications, each subcommand may be defined in\n+its own go package.\n+\n+The suggested approach is for the parent command to use `AddCommand` to add its most immediate\n+subcommands. For example, consider the following directory structure:\n+\n+```console\n+├── cmd\n+│   ├── root.go\n+│   └── sub1\n+│       ├── sub1.go\n+│       └── sub2\n+│           ├── leafA.go\n+│           ├── leafB.go\n+│           └── sub2.go\n+└── main.go\n+```\n+\n+In this case:\n+\n+* The `init` function of `root.go` adds the command defined in `sub1.go` to the root command.\n+* The `init` function of `sub1.go` adds the command defined in `sub2.go` to the sub1 command.\n+* The `init` function of `sub2.go` adds the commands defined in `leafA.go` and `leafB.go` to the\n+  sub2 command.\n+\n+This approach ensures the subcommands are always included at compile time while avoiding cyclic\n+references.\n+\n+### Returning and handling errors\n+\n+If you wish to return an error to the caller of a command, `RunE` can be used.\n+\n+```go\n+package cmd\n+\n+import (\n+  \"fmt\"\n+\n+  \"github.com/spf13/cobra\"\n+)\n+\n+func init() {\n+  rootCmd.AddCommand(tryCmd)\n+}\n+\n+var tryCmd = &cobra.Command{\n+  Use:   \"try\",\n+  Short: \"Try and possibly fail at something\",\n+  RunE: func(cmd *cobra.Command, args []string) error {\n+    if err := someFunc(); err != nil {\n+\treturn err\n+    }\n+    return nil\n+  },\n+}\n+```\n+\n+The error can then be caught at the execute function call.\n+\n+## Working with Flags\n+\n+Flags provide modifiers to control how the action command operates.\n+\n+### Assign flags to a command\n+\n+Since the flags are defined and used in different locations, we need to\n+define a variable outside with the correct scope to assign the flag to\n+work with.\n+\n+```go\n+var Verbose bool\n+var Source string\n+```\n+\n+There are two different approaches to assign a flag.\n+\n+### Persistent Flags\n+\n+A flag can be 'persistent', meaning that this flag will be available to the\n+command it's assigned to as well as every command under that command. For\n+global flags, assign a flag as a persistent flag on the root.\n+\n+```go\n+rootCmd.PersistentFlags().BoolVarP(&Verbose, \"verbose\", \"v\", false, \"verbose output\")\n+```\n+\n+### Local Flags\n+\n+A flag can also be assigned locally, which will only apply to that specific command.\n+\n+```go\n+localCmd.Flags().StringVarP(&Source, \"source\", \"s\", \"\", \"Source directory to read from\")\n+```\n+\n+### Local Flag on Parent Commands\n+\n+By default, Cobra only parses local flags on the target command, and any local flags on\n+parent commands are ignored. By enabling `Command.TraverseChildren`, Cobra will\n+parse local flags on each command before executing the target command.\n+\n+```go\n+command := cobra.Command{\n+  Use: \"print [OPTIONS] [COMMANDS]\",\n+  TraverseChildren: true,\n+}\n+```\n+\n+### Bind Flags with Config\n+\n+You can also bind your flags with [viper](https://github.com/spf13/viper):\n+\n+```go\n+var author string\n+\n+func init() {\n+  rootCmd.PersistentFlags().StringVar(&author, \"author\", \"YOUR NAME\", \"Author name for copyright attribution\")\n+  viper.BindPFlag(\"author\", rootCmd.PersistentFlags().Lookup(\"author\"))\n+}\n+```\n+\n+In this example, the persistent flag `author` is bound with `viper`.\n+**Note**: the variable `author` will not be set to the value from config,\n+when the `--author` flag is provided by user.\n+\n+More in [viper documentation](https://github.com/spf13/viper#working-with-flags).\n+\n+### Required flags\n+\n+Flags are optional by default. If instead you wish your command to report an error\n+when a flag has not been set, mark it as required:\n+\n+```go\n+rootCmd.Flags().StringVarP(&Region, \"region\", \"r\", \"\", \"AWS region (required)\")\n+rootCmd.MarkFlagRequired(\"region\")\n+```\n+\n+Or, for persistent flags:\n+\n+```go\n+rootCmd.PersistentFlags().StringVarP(&Region, \"region\", \"r\", \"\", \"AWS region (required)\")\n+rootCmd.MarkPersistentFlagRequired(\"region\")\n+```\n+\n+### Flag Groups\n+\n+If you have different flags that must be provided together (e.g. if they provide the `--username` flag they MUST provide the `--password` flag as well) then\n+Cobra can enforce that requirement:\n+\n+```go\n+rootCmd.Flags().StringVarP(&u, \"username\", \"u\", \"\", \"Username (required if password is set)\")\n+rootCmd.Flags().StringVarP(&pw, \"password\", \"p\", \"\", \"Password (required if username is set)\")\n+rootCmd.MarkFlagsRequiredTogether(\"username\", \"password\")\n+```\n+\n+You can also prevent different flags from being provided together if they represent mutually\n+exclusive options such as specifying an output format as either `--json` or `--yaml` but never both:\n+\n+```go\n+rootCmd.Flags().BoolVar(&ofJson, \"json\", false, \"Output in JSON\")\n+rootCmd.Flags().BoolVar(&ofYaml, \"yaml\", false, \"Output in YAML\")\n+rootCmd.MarkFlagsMutuallyExclusive(\"json\", \"yaml\")\n+```\n+\n+If you want to require at least one flag from a group to be present, you can use `MarkFlagsOneRequired`.\n+This can be combined with `MarkFlagsMutuallyExclusive` to enforce exactly one flag from a given group:\n+\n+```go\n+rootCmd.Flags().BoolVar(&ofJson, \"json\", false, \"Output in JSON\")\n+rootCmd.Flags().BoolVar(&ofYaml, \"yaml\", false, \"Output in YAML\")\n+rootCmd.MarkFlagsOneRequired(\"json\", \"yaml\")\n+rootCmd.MarkFlagsMutuallyExclusive(\"json\", \"yaml\")\n+```\n+\n+In these cases:\n+  - both local and persistent flags can be used\n+    - **NOTE:** the group is only enforced on commands where every flag is defined\n+  - a flag may appear in multiple groups\n+  - a group may contain any number of flags\n+\n+### Repeated Flags\n+\n+Cobra supports two types of repeated flags, useful for implementing SSH-like verbose flags (`-v`, `-vv`, `-vvv`) or collecting multiple values.\n+\n+#### Count Flags\n+\n+For implementing verbose-style flags where repeated usage increases a counter (like SSH's `-v`, `-vv`, `-vvv`):\n+\n+```go\n+var verbose int\n+\n+func init() {\n+  // CountVarP allows the flag to be repeated to increment the counter\n+  rootCmd.PersistentFlags().CountVarP(&verbose, \"verbose\", \"v\", \"verbose output (can be repeated: -v, -vv, -vvv)\")\n+}\n+```\n+\n+Usage examples:\n+- `myapp -v` → verbose = 1 (info level)\n+- `myapp -vv` or `myapp -v -v` → verbose = 2 (debug level)\n+- `myapp -vvv` or `myapp -v -v -v` → verbose = 3 (trace level)\n+\n+Then in your command logic:\n+```go\n+Run: func(cmd *cobra.Command, args []string) {\n+  switch verbose {\n+  case 0:\n+    // Default: no verbose output\n+  case 1:\n+    // Info level logging\n+    log.SetLevel(log.InfoLevel)\n+  case 2:\n+    // Debug level logging\n+    log.SetLevel(log.DebugLevel)\n+  case 3:\n+    // Trace level logging\n+    log.SetLevel(log.TraceLevel)\n+  default:\n+    // Maximum verbosity\n+    log.SetLevel(log.TraceLevel)\n+  }\n+},\n+```\n+\n+#### Array/Slice Flags\n+\n+For collecting multiple values of the same flag:\n+\n+```go\n+var inputFiles []string\n+\n+func init() {\n+  // StringArrayVarP allows multiple values: --input file1.txt --input file2.txt\n+  rootCmd.Flags().StringArrayVarP(&inputFiles, \"input\", \"i\", []string{}, \"input files (can be repeated)\")\n+\n+  // Alternative: StringSliceVarP for comma-separated values\n+  // rootCmd.Flags().StringSliceVarP(&inputFiles, \"input\", \"i\", []string{}, \"input files (comma-separated or repeated)\")\n+}\n+```\n+\n+Usage examples:\n+- `myapp --input file1.txt --input file2.txt`\n+- `myapp -i file1.txt -i file2.txt`\n+- With StringSlice: `myapp --input file1.txt,file2.txt,file3.txt`\n+\n+**Note**: Both `CountVar` and array flags leverage the underlying [pflag](https://github.com/spf13/pflag) library's support for repeated flags.\n+\n+## Positional and Custom Arguments\n+\n+Validation of positional arguments can be specified using the `Args` field of `Command`.\n+The following validators are built in:\n+\n+- Number of arguments:\n+  - `NoArgs` - report an error if there are any positional args.\n+  - `ArbitraryArgs` - accept any number of args.\n+  - `MinimumNArgs(int)` - report an error if less than N positional args are provided.\n+  - `MaximumNArgs(int)` - report an error if more than N positional args are provided.\n+  - `ExactArgs(int)` - report an error if there are not exactly N positional args.\n+  - `RangeArgs(min, max)` - report an error if the number of args is not between `min` and `max`.\n+- Content of the arguments:\n+  - `OnlyValidArgs` - report an error if there are any positional args not specified in the `ValidArgs` field of `Command`, which can optionally be set to a list of valid values for positional args.\n+  - `NoDuplicateArgs` - report an error if any positional argument value is provided more than once.\n+\n+If `Args` is undefined or `nil`, it defaults to `ArbitraryArgs`.\n+\n+Moreover, `MatchAll(pargs ...PositionalArgs)` enables combining existing checks with arbitrary other checks.\n+For instance, if you want to report an error if there are not exactly N positional args OR if there are any positional\n+args that are not in the `ValidArgs` field of `Command`, you can call `MatchAll` on `ExactArgs` and `OnlyValidArgs`, as\n+shown below:\n+\n+```go\n+var cmd = &cobra.Command{\n+  Short: \"hello\",\n+  Args: cobra.MatchAll(cobra.ExactArgs(2), cobra.OnlyValidArgs),\n+  Run: func(cmd *cobra.Command, args []string) {\n+    fmt.Println(\"Hello, World!\")\n+  },\n+}\n+```\n+\n+It is possible to set any custom validator that satisfies `func(cmd *cobra.Command, args []string) error`.\n+For example:\n+\n+```go\n+var cmd = &cobra.Command{\n+  Short: \"hello\",\n+  Args: func(cmd *cobra.Command, args []string) error {\n+    // Optionally run one of the validators provided by cobra\n+    if err := cobra.MinimumNArgs(1)(cmd, args); err != nil {\n+        return err\n+    }\n+    // Run the custom validation logic\n+    if myapp.IsValidColor(args[0]) {\n+      return nil\n+    }\n+    return fmt.Errorf(\"invalid color specified: %s\", args[0])\n+  },\n+  Run: func(cmd *cobra.Command, args []string) {\n+    fmt.Println(\"Hello, World!\")\n+  },\n+}\n+```\n+\n+## Example\n+\n+In the example below, we have defined three commands. Two are at the top level\n+and one (cmdTimes) is a child of one of the top commands. In this case the root\n+is not executable, meaning that a subcommand is required. This is accomplished\n+by not providing a 'Run' for the 'rootCmd'.\n+\n+We have only defined one flag for a single command.\n+\n+More documentation about flags is available at https://github.com/spf13/pflag.\n+\n+```go\n+package main\n+\n+import (\n+  \"fmt\"\n+  \"strings\"\n+\n+  \"github.com/spf13/cobra\"\n+)\n+\n+func main() {\n+  var echoTimes int\n+\n+  var cmdPrint = &cobra.Command{\n+    Use:   \"print [string to print]\",\n+    Short: \"Print anything to the screen\",\n+    Long: `print is for printing anything back to the screen.\n+For many years people have printed back to the screen.`,\n+    Args: cobra.MinimumNArgs(1),\n+    Run: func(cmd *cobra.Command, args []string) {\n+      fmt.Println(\"Print: \" + strings.Join(args, \" \"))\n+    },\n+  }\n+\n+  var cmdEcho = &cobra.Command{\n+    Use:   \"echo [string to echo]\",\n+    Short: \"Echo anything to the screen\",\n+    Long: `echo is for echoing anything back.\n+Echo works a lot like print, except it has a child command.`,\n+    Args: cobra.MinimumNArgs(1),\n+    Run: func(cmd *cobra.Command, args []string) {\n+      fmt.Println(\"Echo: \" + strings.Join(args, \" \"))\n+    },\n+  }\n+\n+  var cmdTimes = &cobra.Command{\n+    Use:   \"times [string to echo]\",\n+    Short: \"Echo anything to the screen more times\",\n+    Long: `echo things multiple times back to the user by providing\n+a count and a string.`,\n+    Args: cobra.MinimumNArgs(1),\n+    Run: func(cmd *cobra.Command, args []string) {\n+      for i := 0; i < echoTimes; i++ {\n+        fmt.Println(\"Echo: \" + strings.Join(args, \" \"))\n+      }\n+    },\n+  }\n+\n+  cmdTimes.Flags().IntVarP(&echoTimes, \"times\", \"t\", 1, \"times to echo the input\")\n+\n+  var rootCmd = &cobra.Command{Use: \"app\"}\n+  rootCmd.AddCommand(cmdPrint, cmdEcho)\n+  cmdEcho.AddCommand(cmdTimes)\n+  rootCmd.Execute()\n+}\n+```\n+\n+For a more complete example of a larger application, please checkout [Hugo](https://gohugo.io/).\n+\n+## Help Command\n+\n+Cobra automatically adds a help command to your application when you have subcommands.\n+This will be called when a user runs 'app help'. Additionally, help will also\n+support all other commands as input. Say, for instance, you have a command called\n+'create' without any additional configuration; Cobra will work when 'app help\n+create' is called.  Every command will automatically have the '--help' flag added.\n+\n+### Example\n+\n+The following output is automatically generated by Cobra. Nothing beyond the\n+command and flag definitions are needed.\n+\n+```console\n+$ cobra-cli help\n+\n+Cobra is a CLI library for Go that empowers applications.\n+This application is a tool to generate the needed files\n+to quickly create a Cobra application.\n+\n+Usage:\n+  cobra-cli [command]\n+\n+Available Commands:\n+  add         Add a command to a Cobra Application\n+  completion  Generate the autocompletion script for the specified shell\n+  help        Help about any command\n+  init        Initialize a Cobra Application\n+\n+Flags:\n+  -a, --author string    author name for copyright attribution (default \"YOUR NAME\")\n+      --config string    config file (default is $HOME/.cobra.yaml)\n+  -h, --help             help for cobra-cli\n+  -l, --license string   name of license for the project\n+      --viper            use Viper for configuration\n+\n+Use \"cobra-cli [command] --help\" for more information about a command.\n+```\n+\n+Help is just a command like any other. There is no special logic or behavior\n+around it. In fact, you can provide your own if you want.\n+\n+### Grouping commands in help\n+\n+Cobra supports grouping of available commands in the help output.  To group commands, each group must be explicitly\n+defined using `AddGroup()` on the parent command.  Then a subcommand can be added to a group using the `GroupID` element\n+of that subcommand. The groups will appear in the help output in the same order as they are defined using different\n+calls to `AddGroup()`.  If you use the generated `help` or `completion` commands, you can set their group ids using\n+`SetHelpCommandGroupId()` and `SetCompletionCommandGroupId()` on the root command, respectively.\n+\n+### Defining your own help\n+\n+You can provide your own Help command or your own template for the default command to use\n+with the following functions:\n+\n+```go\n+cmd.SetHelpCommand(cmd *Command)\n+cmd.SetHelpFunc(f func(*Command, []string))\n+cmd.SetHelpTemplate(s string)\n+```\n+\n+The latter two will also apply to any children commands.\n+\n+Note that templates specified with `SetHelpTemplate` are evaluated using\n+`text/template` which can increase the size of the compiled executable.\n+\n+## Usage Message\n+\n+When the user provides an invalid flag or invalid command, Cobra responds by\n+showing the user the 'usage'.\n+\n+### Example\n+You may recognize this from the help above. That's because the default help\n+embeds the usage as part of its output.\n+\n+```console\n+$ cobra-cli --invalid\n+Error: unknown flag: --invalid\n+Usage:\n+  cobra-cli [command]\n+\n+Available Commands:\n+  add         Add a command to a Cobra Application\n+  completion  Generate the autocompletion script for the specified shell\n+  help        Help about any command\n+  init        Initialize a Cobra Application\n+\n+Flags:\n+  -a, --author string    author name for copyright attribution (default \"YOUR NAME\")\n+      --config string    config file (default is $HOME/.cobra.yaml)\n+  -h, --help             help for cobra-cli\n+  -l, --license string   name of license for the project\n+      --viper            use Viper for configuration\n+\n+Use \"cobra [command] --help\" for more information about a command.\n+```\n+\n+### Defining your own usage\n+\n+You can provide your own usage function or template for Cobra to use.\n+Like help, the function and template are overridable through public methods:\n+\n+```go\n+cmd.SetUsageFunc(f func(*Command) error)\n+cmd.SetUsageTemplate(s string)\n+```\n+\n+Note that templates specified with `SetUsageTemplate` are evaluated using\n+`text/template` which can increase the size of the compiled executable.\n+\n+## Version Flag\n+\n+Cobra adds a top-level '--version' flag if the Version field is set on the root command.\n+Running an application with the '--version' flag will print the version to stdout using\n+the version template. The template can be customized using the\n+`cmd.SetVersionTemplate(s string)` function.\n+\n+Note that templates specified with `SetVersionTemplate` are evaluated using\n+`text/template` which can increase the size of the compiled executable.\n+\n+## Error Message Prefix\n+\n+Cobra prints an error message when receiving a non-nil error value.\n+The default error message is `Error: <error contents>`.\n+The Prefix, `Error:` can be customized using the `cmd.SetErrPrefix(s string)` function.\n+\n+## PreRun and PostRun Hooks\n+\n+It is possible to run functions before or after the main `Run` function of your command. The `PersistentPreRun` and `PreRun` functions will be executed before `Run`. `PersistentPostRun` and `PostRun` will be executed after `Run`.  The `Persistent*Run` functions will be inherited by children if they do not declare their own.  The `*PreRun` and `*PostRun` functions will only be executed if the `Run` function of the current command has been declared.  These functions are run in the following order:\n+\n+- `PersistentPreRun`\n+- `PreRun`\n+- `Run`\n+- `PostRun`\n+- `PersistentPostRun`\n+\n+An example of two commands which use all of these features is below.  When the subcommand is executed, it will run the root command's `PersistentPreRun` but not the root command's `PersistentPostRun`:\n+\n+```go\n+package main\n+\n+import (\n+  \"fmt\"\n+\n+  \"github.com/spf13/cobra\"\n+)\n+\n+func main() {\n+\n+  var rootCmd = &cobra.Command{\n+    Use:   \"root [sub]\",\n+    Short: \"My root command\",\n+    PersistentPreRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside rootCmd PersistentPreRun with args: %v\\n\", args)\n+    },\n+    PreRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside rootCmd PreRun with args: %v\\n\", args)\n+    },\n+    Run: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside rootCmd Run with args: %v\\n\", args)\n+    },\n+    PostRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside rootCmd PostRun with args: %v\\n\", args)\n+    },\n+    PersistentPostRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside rootCmd PersistentPostRun with args: %v\\n\", args)\n+    },\n+  }\n+\n+  var subCmd = &cobra.Command{\n+    Use:   \"sub [no options!]\",\n+    Short: \"My subcommand\",\n+    PreRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside subCmd PreRun with args: %v\\n\", args)\n+    },\n+    Run: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside subCmd Run with args: %v\\n\", args)\n+    },\n+    PostRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside subCmd PostRun with args: %v\\n\", args)\n+    },\n+    PersistentPostRun: func(cmd *cobra.Command, args []string) {\n+      fmt.Printf(\"Inside subCmd PersistentPostRun with args: %v\\n\", args)\n+    },\n+  }\n+\n+  rootCmd.AddCommand(subCmd)\n+\n+  rootCmd.SetArgs([]string{\"\"})\n+  rootCmd.Execute()\n+  fmt.Println()\n+  rootCmd.SetArgs([]string{\"sub\", \"arg1\", \"arg2\"})\n+  rootCmd.Execute()\n+}\n+```\n+\n+Output:\n+```\n+Inside rootCmd PersistentPreRun with args: []\n+Inside rootCmd PreRun with args: []\n+Inside rootCmd Run with args: []\n+Inside rootCmd PostRun with args: []\n+Inside rootCmd PersistentPostRun with args: []\n+\n+Inside rootCmd PersistentPreRun with args: [arg1 arg2]\n+Inside subCmd PreRun with args: [arg1 arg2]\n+Inside subCmd Run with args: [arg1 arg2]\n+Inside subCmd PostRun with args: [arg1 arg2]\n+Inside subCmd PersistentPostRun with args: [arg1 arg2]\n+```\n+\n+By default, only the first persistent hook found in the command chain is executed.\n+That is why in the above output, the `rootCmd PersistentPostRun` was not called for a child command.\n+Set `EnableTraverseRunHooks` global variable to `true` if you want to execute all parents' persistent hooks.\n+\n+## Suggestions when \"unknown command\" happens\n+\n+Cobra will print automatic suggestions when \"unknown command\" errors happen. This allows Cobra to behave similarly to the `git` command when a typo happens. For example:\n+\n+```console\n+$ myapp srever\n+Error: unknown command \"srever\" for \"myapp\"\n+\n+Did you mean this?\n+        server\n+\n+Run 'myapp --help' for usage.\n+```\n+\n+Suggestions are automatically generated based on existing subcommands and use an implementation of [Levenshtein distance](https://en.wikipedia.org/wiki/Levenshtein_distance). Every registered command that matches a minimum distance of 2 (ignoring case) will be displayed as a suggestion.\n+\n+If you need to disable suggestions or tweak the string distance in your command, use:\n+\n+```go\n+command.DisableSuggestions = true\n+```\n+\n+or\n+\n+```go\n+command.SuggestionsMinimumDistance = 1\n+```\n+\n+You can also explicitly set names for which a given command will be suggested using the `SuggestFor` attribute. This allows suggestions for strings that are not close in terms of string distance, but make sense in your set of commands but for which\n+you don't want aliases. Example:\n+\n+```console\n+$ kubectl remove\n+Error: unknown command \"remove\" for \"kubectl\"\n+\n+Did you mean this?\n+        delete\n+\n+Run 'kubectl help' for usage.\n+```\n+\n+## Generating documentation for your command\n+\n+Cobra can generate documentation based on subcommands, flags, etc.\n+Read more about it in the [docs generation documentation](docgen/_index.md).\n+\n+## Generating shell completions\n+\n+Cobra can generate a shell-completion file for the following shells: bash, zsh, fish, PowerShell.\n+If you add more information to your commands, these completions can be amazingly powerful and flexible.\n+Read more about it in [Shell Completions](completions/_index.md).\n+\n+## Providing Active Help\n+\n+Cobra makes use of the shell-completion system to define a framework allowing you to provide Active Help to your users.\n+Active Help are messages (hints, warnings, etc) printed as the program is being used.\n+Read more about it in [Active Help](active_help.md).\n+\n+## Creating a plugin\n+\n+When creating a plugin for tools like *kubectl*, the executable is named\n+`kubectl-myplugin`, but it is used as `kubectl myplugin`. To fix help\n+messages and completions, annotate the root command with the\n+`cobra.CommandDisplayNameAnnotation` annotation.\n+\n+### Example kubectl plugin\n+\n+```go\n+package main\n+\n+import (\n+\t\"fmt\"\n+\n+\t\"github.com/spf13/cobra\"\n+)\n+\n+func main() {\n+\trootCmd := &cobra.Command{\n+\t\tUse: \"kubectl-myplugin\",\n+\t\tAnnotations: map[string]string{\n+\t\t\tcobra.CommandDisplayNameAnnotation: \"kubectl myplugin\",\n+\t\t},\n+\t}\n+\tsubCmd := &cobra.Command{\n+\t\tUse: \"subcmd\",\n+\t\tRun: func(cmd *cobra.Command, args []string) {\n+\t\t\tfmt.Println(\"kubectl myplugin subcmd\")\n+\t\t},\n+\t}\n+\trootCmd.AddCommand(subCmd)\n+\trootCmd.Execute()\n+}\n+```\n+\n+Example run as a kubectl plugin:\n+\n+```console\n+$ kubectl myplugin\n+Usage:\n+  kubectl myplugin [command]\n+\n+Available Commands:\n+  completion  Generate the autocompletion script for the specified shell\n+  help        Help about any command\n+  subcmd\n+\n+Flags:\n+  -h, --help   help for kubectl myplugin\n+\n+Use \"kubectl myplugin [command] --help\" for more information about a command.\n+```\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "MNT-009",
+      "filename": "MNT-009.patch",
+      "diff": "Index: .github/workflows/test.yml\n===================================================================\n--- .github/workflows/test.yml\tbefore\n+++ .github/workflows/test.yml\tafter\n@@ -1,125 +1,125 @@\n-name: Test\r\n-\r\n-on:\r\n-  push:\r\n-  pull_request:\r\n-  workflow_dispatch:\r\n-\r\n-env:\r\n-  GO111MODULE: on\r\n-\r\n-permissions:\r\n-  contents: read\r\n-\r\n-jobs:\r\n-\r\n-\r\n-  lic-headers:\r\n-    runs-on: ubuntu-latest\r\n-    steps:\r\n-\r\n-      - uses: actions/checkout@v4\r\n-\r\n-      - run: >-\r\n-          docker run\r\n-          -v $(pwd):/wrk -w /wrk\r\n-          ghcr.io/google/addlicense\r\n-          -c 'The Cobra Authors'\r\n-          -y '2013-2023'\r\n-          -l apache\r\n-          -ignore '.github/**'\r\n-          -check\r\n-          .\r\n-\r\n-\r\n-  golangci-lint:\r\n-    permissions:\r\n-      contents: read  # for actions/checkout to fetch code\r\n-      pull-requests: read  # for golangci/golangci-lint-action to fetch pull requests\r\n-    runs-on: ubuntu-latest\r\n-    steps:\r\n-\r\n-      - uses: actions/checkout@v4\r\n-\r\n-      - uses: actions/setup-go@v6\r\n-        with:\r\n-          go-version: '^1.22'\r\n-          check-latest: true\r\n-          cache: true\r\n-\r\n-      - uses: golangci/golangci-lint-action@v8.0.0\r\n-        with:\r\n-          version: latest\r\n-          args: --verbose\r\n-\r\n-\r\n-  test-unix:\r\n-    strategy:\r\n-      fail-fast: false\r\n-      matrix:\r\n-        platform:\r\n-        - ubuntu\r\n-        - macOS\r\n-        go:\r\n-        - 17\r\n-        - 18\r\n-        - 19\r\n-        - 20\r\n-        - 21\r\n-        - 22\r\n-        - 23\r\n-        - 24\r\n-    name: '${{ matrix.platform }} | 1.${{ matrix.go }}.x'\r\n-    runs-on: ${{ matrix.platform }}-latest\r\n-    steps:\r\n-\r\n-    - uses: actions/checkout@v4\r\n-\r\n-    - uses: actions/setup-go@v6\r\n-      with:\r\n-        go-version: 1.${{ matrix.go }}.x\r\n-        cache: true\r\n-\r\n-    - run: |\r\n-        export GOBIN=$HOME/go/bin\r\n-        go install github.com/kyoh86/richgo@latest\r\n-        go install github.com/mitchellh/gox@latest\r\n-\r\n-    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin/:$PATH make richtest\r\n-\r\n-\r\n-  test-win:\r\n-    name: MINGW64\r\n-    defaults:\r\n-      run:\r\n-        shell: msys2 {0}\r\n-    runs-on: windows-latest\r\n-    steps:\r\n-\r\n-    - shell: bash\r\n-      run: git config --global core.autocrlf input\r\n-\r\n-    - uses: msys2/setup-msys2@v2\r\n-      with:\r\n-        msystem: MINGW64\r\n-        update: true\r\n-        install: >\r\n-          git\r\n-          make\r\n-          unzip\r\n-          mingw-w64-x86_64-go\r\n-\r\n-    - uses: actions/checkout@v4\r\n-\r\n-    - uses: actions/cache@v4\r\n-      with:\r\n-        path: ~/go/pkg/mod\r\n-        key: ${{ runner.os }}-${{ matrix.go }}-${{ hashFiles('**/go.sum') }}\r\n-        restore-keys: ${{ runner.os }}-${{ matrix.go }}-\r\n-\r\n-    - run: |\r\n-        export GOBIN=$HOME/go/bin\r\n-        go install github.com/kyoh86/richgo@latest\r\n-        go install github.com/mitchellh/gox@latest\r\n-\r\n-    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin:$PATH make richtest\r\n+name: Test\n+\n+on:\n+  push:\n+  pull_request:\n+  workflow_dispatch:\n+\n+env:\n+  GO111MODULE: on\n+\n+permissions:\n+  contents: read\n+\n+jobs:\n+\n+\n+  lic-headers:\n+    runs-on: ubuntu-latest\n+    steps:\n+\n+      - uses: actions/checkout@v4\n+\n+      - run: >-\n+          docker run\n+          -v $(pwd):/wrk -w /wrk\n+          ghcr.io/google/addlicense\n+          -c 'The Cobra Authors'\n+          -y '2013-2023'\n+          -l apache\n+          -ignore '.github/**'\n+          -check\n+          .\n+\n+\n+  golangci-lint:\n+    permissions:\n+      contents: read  # for actions/checkout to fetch code\n+      pull-requests: read  # for golangci/golangci-lint-action to fetch pull requests\n+    runs-on: ubuntu-latest\n+    steps:\n+\n+      - uses: actions/checkout@v4\n+\n+      - uses: actions/setup-go@v6\n+        with:\n+          go-version: '^1.22'\n+          check-latest: true\n+          cache: true\n+\n+      - uses: golangci/golangci-lint-action@v8.0.0\n+        with:\n+          version: latest\n+          args: --verbose\n+\n+\n+  test-unix:\n+    strategy:\n+      fail-fast: false\n+      matrix:\n+        platform:\n+        - ubuntu\n+        - macOS\n+        go:\n+        - 17\n+        - 18\n+        - 19\n+        - 20\n+        - 21\n+        - 22\n+        - 23\n+        - 24\n+    name: '${{ matrix.platform }} | 1.${{ matrix.go }}.x'\n+    runs-on: ${{ matrix.platform }}-latest\n+    steps:\n+\n+    - uses: actions/checkout@v4\n+\n+    - uses: actions/setup-go@v6\n+      with:\n+        go-version: 1.${{ matrix.go }}.x\n+        cache: true\n+\n+    - run: |\n+        export GOBIN=$HOME/go/bin\n+        go install github.com/kyoh86/richgo@v0.3.10\n+        go install github.com/mitchellh/gox@v1.0.1\n+\n+    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin/:$PATH make richtest\n+\n+\n+  test-win:\n+    name: MINGW64\n+    defaults:\n+      run:\n+        shell: msys2 {0}\n+    runs-on: windows-latest\n+    steps:\n+\n+    - shell: bash\n+      run: git config --global core.autocrlf input\n+\n+    - uses: msys2/setup-msys2@v2\n+      with:\n+        msystem: MINGW64\n+        update: true\n+        install: >\n+          git\n+          make\n+          unzip\n+          mingw-w64-x86_64-go\n+\n+    - uses: actions/checkout@v4\n+\n+    - uses: actions/cache@v4\n+      with:\n+        path: ~/go/pkg/mod\n+        key: ${{ runner.os }}-${{ matrix.go }}-${{ hashFiles('**/go.sum') }}\n+        restore-keys: ${{ runner.os }}-${{ matrix.go }}-\n+\n+    - run: |\n+        export GOBIN=$HOME/go/bin\n+        go install github.com/kyoh86/richgo@v0.3.10\n+        go install github.com/mitchellh/gox@v1.0.1\n+\n+    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin:$PATH make richtest\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    },
+    {
+      "findingId": "MNT-010",
+      "filename": "MNT-010.patch",
+      "diff": "Index: .github/workflows/test.yml\n===================================================================\n--- .github/workflows/test.yml\tbefore\n+++ .github/workflows/test.yml\tafter\n@@ -1,125 +1,125 @@\n-name: Test\r\n-\r\n-on:\r\n-  push:\r\n-  pull_request:\r\n-  workflow_dispatch:\r\n-\r\n-env:\r\n-  GO111MODULE: on\r\n-\r\n-permissions:\r\n-  contents: read\r\n-\r\n-jobs:\r\n-\r\n-\r\n-  lic-headers:\r\n-    runs-on: ubuntu-latest\r\n-    steps:\r\n-\r\n-      - uses: actions/checkout@v4\r\n-\r\n-      - run: >-\r\n-          docker run\r\n-          -v $(pwd):/wrk -w /wrk\r\n-          ghcr.io/google/addlicense\r\n-          -c 'The Cobra Authors'\r\n-          -y '2013-2023'\r\n-          -l apache\r\n-          -ignore '.github/**'\r\n-          -check\r\n-          .\r\n-\r\n-\r\n-  golangci-lint:\r\n-    permissions:\r\n-      contents: read  # for actions/checkout to fetch code\r\n-      pull-requests: read  # for golangci/golangci-lint-action to fetch pull requests\r\n-    runs-on: ubuntu-latest\r\n-    steps:\r\n-\r\n-      - uses: actions/checkout@v4\r\n-\r\n-      - uses: actions/setup-go@v6\r\n-        with:\r\n-          go-version: '^1.22'\r\n-          check-latest: true\r\n-          cache: true\r\n-\r\n-      - uses: golangci/golangci-lint-action@v8.0.0\r\n-        with:\r\n-          version: latest\r\n-          args: --verbose\r\n-\r\n-\r\n-  test-unix:\r\n-    strategy:\r\n-      fail-fast: false\r\n-      matrix:\r\n-        platform:\r\n-        - ubuntu\r\n-        - macOS\r\n-        go:\r\n-        - 17\r\n-        - 18\r\n-        - 19\r\n-        - 20\r\n-        - 21\r\n-        - 22\r\n-        - 23\r\n-        - 24\r\n-    name: '${{ matrix.platform }} | 1.${{ matrix.go }}.x'\r\n-    runs-on: ${{ matrix.platform }}-latest\r\n-    steps:\r\n-\r\n-    - uses: actions/checkout@v4\r\n-\r\n-    - uses: actions/setup-go@v6\r\n-      with:\r\n-        go-version: 1.${{ matrix.go }}.x\r\n-        cache: true\r\n-\r\n-    - run: |\r\n-        export GOBIN=$HOME/go/bin\r\n-        go install github.com/kyoh86/richgo@latest\r\n-        go install github.com/mitchellh/gox@latest\r\n-\r\n-    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin/:$PATH make richtest\r\n-\r\n-\r\n-  test-win:\r\n-    name: MINGW64\r\n-    defaults:\r\n-      run:\r\n-        shell: msys2 {0}\r\n-    runs-on: windows-latest\r\n-    steps:\r\n-\r\n-    - shell: bash\r\n-      run: git config --global core.autocrlf input\r\n-\r\n-    - uses: msys2/setup-msys2@v2\r\n-      with:\r\n-        msystem: MINGW64\r\n-        update: true\r\n-        install: >\r\n-          git\r\n-          make\r\n-          unzip\r\n-          mingw-w64-x86_64-go\r\n-\r\n-    - uses: actions/checkout@v4\r\n-\r\n-    - uses: actions/cache@v4\r\n-      with:\r\n-        path: ~/go/pkg/mod\r\n-        key: ${{ runner.os }}-${{ matrix.go }}-${{ hashFiles('**/go.sum') }}\r\n-        restore-keys: ${{ runner.os }}-${{ matrix.go }}-\r\n-\r\n-    - run: |\r\n-        export GOBIN=$HOME/go/bin\r\n-        go install github.com/kyoh86/richgo@latest\r\n-        go install github.com/mitchellh/gox@latest\r\n-\r\n-    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin:$PATH make richtest\r\n+name: Test\n+\n+on:\n+  push:\n+  pull_request:\n+  workflow_dispatch:\n+\n+env:\n+  GO111MODULE: on\n+\n+permissions:\n+  contents: read\n+\n+jobs:\n+\n+\n+  lic-headers:\n+    runs-on: ubuntu-latest\n+    steps:\n+\n+      - uses: actions/checkout@v4\n+\n+      - run: >-\n+          docker run\n+          -v $(pwd):/wrk -w /wrk\n+          ghcr.io/google/addlicense\n+          -c 'The Cobra Authors'\n+          -y '2013-2023'\n+          -l apache\n+          -ignore '.github/**'\n+          -check\n+          .\n+\n+\n+  golangci-lint:\n+    permissions:\n+      contents: read  # for actions/checkout to fetch code\n+      pull-requests: read  # for golangci/golangci-lint-action to fetch pull requests\n+    runs-on: ubuntu-latest\n+    steps:\n+\n+      - uses: actions/checkout@v4\n+\n+      - uses: actions/setup-go@v6\n+        with:\n+          go-version: '^1.22'\n+          check-latest: true\n+          cache: true\n+\n+      - uses: golangci/golangci-lint-action@v8.0.0\n+        with:\n+          version: v1.59.1\n+          args: --verbose\n+\n+\n+  test-unix:\n+    strategy:\n+      fail-fast: false\n+      matrix:\n+        platform:\n+        - ubuntu\n+        - macOS\n+        go:\n+        - 17\n+        - 18\n+        - 19\n+        - 20\n+        - 21\n+        - 22\n+        - 23\n+        - 24\n+    name: '${{ matrix.platform }} | 1.${{ matrix.go }}.x'\n+    runs-on: ${{ matrix.platform }}-latest\n+    steps:\n+\n+    - uses: actions/checkout@v4\n+\n+    - uses: actions/setup-go@v6\n+      with:\n+        go-version: 1.${{ matrix.go }}.x\n+        cache: true\n+\n+    - run: |\n+        export GOBIN=$HOME/go/bin\n+        go install github.com/kyoh86/richgo@latest\n+        go install github.com/mitchellh/gox@latest\n+\n+    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin/:$PATH make richtest\n+\n+\n+  test-win:\n+    name: MINGW64\n+    defaults:\n+      run:\n+        shell: msys2 {0}\n+    runs-on: windows-latest\n+    steps:\n+\n+    - shell: bash\n+      run: git config --global core.autocrlf input\n+\n+    - uses: msys2/setup-msys2@v2\n+      with:\n+        msystem: MINGW64\n+        update: true\n+        install: >\n+          git\n+          make\n+          unzip\n+          mingw-w64-x86_64-go\n+\n+    - uses: actions/checkout@v4\n+\n+    - uses: actions/cache@v4\n+      with:\n+        path: ~/go/pkg/mod\n+        key: ${{ runner.os }}-${{ matrix.go }}-${{ hashFiles('**/go.sum') }}\n+        restore-keys: ${{ runner.os }}-${{ matrix.go }}-\n+\n+    - run: |\n+        export GOBIN=$HOME/go/bin\n+        go install github.com/kyoh86/richgo@latest\n+        go install github.com/mitchellh/gox@latest\n+\n+    - run: RICHGO_FORCE_COLOR=1 PATH=$HOME/go/bin:$PATH make richtest\n",
+      "status": {
+        "kind": "proposed-unverified",
+        "reason": "no grammar to verify syntax; provide --verify-command to confirm"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[2m• Ingesting requests…[22m
+[2m  124 files ingested (0 ignored)[22m
+[2m• Mapping structure…[22m
+[2m  124 files · 106 edges · 16 components · 37 parsed precisely[22m
+[2m• Auditing via Claude Code subscription (claude CLI, OAuth — Pro/Max) (cached)…[22m
+[2m  Budget: ≤200 calls, ≤$50 (override with --max-cost / --max-calls)[22m
+[2m• Generating 6 candidate patch(es)…[22m
+
+[1mAudit complete in 829.5s[22m
+  Health score: [1m0/100[22m
+  Findings:     53
+  Patches:      5
+  Cost:         ~$2.5566 (16 calls)
+  Report:       .scratch\validation\py-requests\report.md
+  JSON:         .scratch\validation\py-requests\findings.json

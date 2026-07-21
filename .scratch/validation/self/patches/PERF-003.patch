@@ -1,0 +1,53 @@
+Index: src/mapping/treesitter.ts
+===================================================================
+--- src/mapping/treesitter.ts	before
++++ src/mapping/treesitter.ts	after
+@@ -81,14 +81,15 @@
+   type_alias_declaration: "type",
+ };
+ 
+ function stripQuotes(text: string): string {
+-  return text.replace(/^['"`]/, "").replace(/['"`]$/, "");
++  return text.replace(/^['"` + "`" + `]/, "").replace(/['"` + "`" + `]$/, "");
+ }
+ 
+ export class TreeSitterEngine {
+   private parserCtor: TS = null;
+   private readonly langs = new Map<Language, TS>();
++  private readonly queries = new Map<string, TS>();
+   private readonly wasmDir: string;
+ 
+   constructor() {
+     this.wasmDir = require
+@@ -145,9 +146,14 @@
+ 
+   private extractSymbols(language: TS, root: TS, lang: Language): SymbolDef[] {
+     const queryStr = SYMBOL_QUERIES[lang];
+     if (!queryStr) return [];
+-    const query = language.query(queryStr);
++    const cacheKey = `${lang}:symbols`;
++    let query = this.queries.get(cacheKey);
++    if (!query) {
++      query = language.query(queryStr);
++      this.queries.set(cacheKey, query);
++    }
+     const out: SymbolDef[] = [];
+     for (const match of query.matches(root)) {
+       const def = match.captures.find((c: TS) => c.name === "def")?.node;
+       const name = match.captures.find((c: TS) => c.name === "name")?.node;
+@@ -166,9 +172,14 @@
+ 
+   private extractImports(language: TS, root: TS, lang: Language): ImportRef[] {
+     const queryStr = IMPORT_QUERIES[lang];
+     if (!queryStr) return [];
+-    const query = language.query(queryStr);
++    const cacheKey = `${lang}:imports`;
++    let query = this.queries.get(cacheKey);
++    if (!query) {
++      query = language.query(queryStr);
++      this.queries.set(cacheKey, query);
++    }
+     const out: ImportRef[] = [];
+     for (const match of query.matches(root)) {
+       const callee = match.captures.find((c: TS) => c.name === "callee")?.node;
+       // For call-expression matches, only keep require(...) / import(...).

@@ -1,0 +1,42 @@
+{
+  "target": "Codebase-Auditor",
+  "generatedAt": "2026-06-29T10:10:36.740Z",
+  "commit": "eef65edba0ed00e8b26fff860e52e0e79504fb71",
+  "provider": "Claude Code subscription (claude CLI, OAuth — Pro/Max) (cached)",
+  "repo": {
+    "fileCount": 92,
+    "totalLoc": 5668,
+    "edgeCount": 163,
+    "componentCount": 29,
+    "languageBreakdown": {
+      "unknown": 24,
+      "typescript": 60,
+      "python": 8
+    },
+    "preciseFiles": 68
+  },
+  "ingest": {
+    "considered": 96,
+    "ingested": 92,
+    "skippedBinary": 1,
+    "skippedTooLarge": 0,
+    "skippedIgnored": 3
+  },
+  "passes": {
+    "deepDives": 8,
+    "crossCut": true,
+    "rawFindings": 51,
+    "groundedFindings": 51,
+    "droppedUngrounded": 0
+  },
+  "budget": {
+    "calls": 7,
+    "inputTokens": 504,
+    "outputTokens": 29983,
+    "totalTokens": 30487,
+    "costUsd": 1.312617,
+    "substitutions": 0
+  },
+  "findingCount": 51,
+  "patchCount": 6
+}

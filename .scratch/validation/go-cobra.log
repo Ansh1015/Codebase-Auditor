@@ -1,0 +1,15 @@
+[2m• Ingesting cobra…[22m
+[2m  65 files ingested (0 ignored)[22m
+[2m• Mapping structure…[22m
+[2m  65 files · 0 edges · 5 components · 0 parsed precisely[22m
+[2m• Auditing via Claude Code subscription (claude CLI, OAuth — Pro/Max) (cached)…[22m
+[2m  Budget: ≤200 calls, ≤$50 (override with --max-cost / --max-calls)[22m
+[2m• Generating 6 candidate patch(es)…[22m
+
+[1mAudit complete in 708.8s[22m
+  Health score: [1m0/100[22m
+  Findings:     32
+  Patches:      6
+  Cost:         ~$2.0552 (13 calls)
+  Report:       .scratch\validation\go-cobra\report.md
+  JSON:         .scratch\validation\go-cobra\findings.json

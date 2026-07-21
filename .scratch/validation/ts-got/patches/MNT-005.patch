@@ -1,0 +1,15 @@
+Index: source/create.ts
+===================================================================
+--- source/create.ts	before
++++ source/create.ts	after
+@@ -22,9 +22,9 @@
+ 	type OptionsInit,
+ } from './core/options.js';
+ import type {RequestPromise} from './as-promise/types.js';
+ 
+-const isGotInstance = (value: Got | ExtendOptions): value is Got => is.function(value);
++const isGotInstance = (value: Got | ExtendOptions): value is Got => is.function(value) && 'defaults' in value;
+ 
+ const aliases: readonly HTTPAlias[] = [
+ 	'get',
+ 	'post',
